@@ -13,8 +13,8 @@ st.title("✈️ Cheapest Airfare Finder")
 st.write("Enter your travel details below:")
 
 # User inputs
-from_location = st.text_input("From (Airport Code)", value="YVR")
-to_location = st.text_input("To (Airport Code)", value="LAX")
+from_location = st.text_input("From (Airport Code)", value="SFO")
+to_location = st.text_input("To (Airport Code)", value="JFK")
 travel_date = st.date_input("Travel Date")
 
 if st.button("🔍 Search Flights"):
@@ -44,9 +44,11 @@ if st.button("🔍 Search Flights"):
                 if not flights:
                     st.warning("No flights found. Try a different search.")
 
-                # Sort flights by price (handling commas in large prices)
+                # Sort flights by price (ascending order)
                 flights = sorted(flights, key=lambda x: int(x["price"].replace("$", "").replace(",", "")))
 
+                # Find the lowest price for comparison
+                lowest_price = int(flights[0]["price"].replace("$", "").replace(",", ""))
 
                 # Show only top 3 results
                 st.subheader("📌 Top 3 Flight Options:")
@@ -56,7 +58,42 @@ if st.button("🔍 Search Flights"):
                     st.write(f"**Type:** {flight['type']}")
                     st.write(f"**Price:** {flight['price']}")
                     st.write(f"**Duration:** {flight['duration']}")
-                    
+
+                    # ✅ Generate Pros & Cons
+                    pros = []
+                    cons = []
+
+                    # Check flight type
+                    if flight["type"].lower() == "nonstop":
+                        pros.append("No layovers ✅")
+                    else:
+                        cons.append("Has layovers ❌")
+
+                    # Check flight duration
+                    duration_hours = int(flight["duration"].split("h")[0])
+                    if duration_hours < 6:
+                        pros.append("Short travel time ✅")
+                    elif duration_hours > 12:
+                        cons.append("Long travel time ❌")
+
+                    # Compare price
+                    price_int = int(flight["price"].replace("$", "").replace(",", ""))
+                    if price_int == lowest_price:
+                        pros.append("Cheapest option ✅")
+                    elif price_int > (lowest_price * 1.5):  # If more than 50% higher than the cheapest
+                        cons.append("Expensive compared to cheapest option ❌")
+
+                    # Display Pros & Cons
+                    if pros:
+                        st.write("**✅ Pros:**")
+                        for pro in pros:
+                            st.write(f"- {pro}")
+
+                    if cons:
+                        st.write("**❌ Cons:**")
+                        for con in cons:
+                            st.write(f"- {con}")
+
                     # Add a "Book Now" button with a proper link
                     st.markdown(
                         f'<a href="{flight["url"]}" target="_blank"><button style="background-color:#4CAF50;color:white;padding:8px 16px;border:none;border-radius:4px;cursor:pointer;">Book Now</button></a>',
