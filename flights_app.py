@@ -95,8 +95,39 @@ if st.button("🔍 Search Flights"):
                             st.write(f"- {con}")
 
                     # Add a "Book Now" button with a proper link
+                    # st.markdown(
+                    #     f'<a href="{flight["url"]}" target="_blank"><button style="background-color:#4CAF50;color:white;padding:8px 16px;border:none;border-radius:4px;cursor:pointer;">Book Now</button></a>',
+                    #     unsafe_allow_html=True
+                    # )
+                    # Define known airline booking URLs
+                    AIRLINE_BOOKING_SITES = {
+                        "Air Canada": "https://www.aircanada.com",
+                        "Delta": "https://www.delta.com",
+                        "JetBlue": "https://www.jetblue.com",
+                        "United": "https://www.united.com",
+                        "American Airlines": "https://www.aa.com",
+                        "Southwest": "https://www.southwest.com",
+                        "Alaska Airlines": "https://www.alaskaair.com",
+                        "WestJet": "https://www.westjet.com"
+                    }
+
+                    # Determine the correct booking URL
+                    def get_booking_url(flight):
+                        airline = flight["airline"]
+                        google_flights_url = flight["url"]
+
+                        # If the airline has a known booking website, use it
+                        if airline in AIRLINE_BOOKING_SITES:
+                            return AIRLINE_BOOKING_SITES[airline]
+                        else:
+                            return google_flights_url  # Fallback to Google Flights link
+
+                    # Generate the booking URL
+                    booking_url = get_booking_url(flight)
+
+                    # Add a "Book Now" button with the correct link
                     st.markdown(
-                        f'<a href="{flight["url"]}" target="_blank"><button style="background-color:#4CAF50;color:white;padding:8px 16px;border:none;border-radius:4px;cursor:pointer;">Book Now</button></a>',
+                        f'<a href="{booking_url}" target="_blank"><button style="background-color:#4CAF50;color:white;padding:8px 16px;border:none;border-radius:4px;cursor:pointer;">Book Now</button></a>',
                         unsafe_allow_html=True
                     )
                     st.write("---")
@@ -105,3 +136,5 @@ if st.button("🔍 Search Flights"):
                 st.error("No flight data found. Try another search.")
         else:
             st.error(f"API Error: {response.status_code} - {response.text}")
+
+
