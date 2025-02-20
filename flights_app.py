@@ -13,9 +13,14 @@ ssl_context = ssl.create_default_context(cafile=certifi.where())
 
 
 # Set API credentials (Use environment variables if set)
-OXYLABS_USERNAME = os.getenv("OXYLABS_USERNAME", "ejiang1_Hq6Ex")
-OXYLABS_PASSWORD = os.getenv("OXYLABS_PASSWORD", "Airtahero_3308")
+OXYLABS_USERNAME = os.getenv("OXYLABS_USERNAME")
+OXYLABS_PASSWORD = os.getenv("OXYLABS_PASSWORD")
 API_URL = "https://realtime.oxylabs.io/v1/queries"
+# Rmoved hard coded values for OXYLABS_USERNAME and OXYLABS_PASSWORD:
+# To set environment variables in Linux/Mac:
+# export OXYLABS_USERNAME="your_username"
+# export OXYLABS_PASSWORD="your_password"
+
 
 # Streamlit UI
 st.title("✈️ Cheapest Airfare Finder")
