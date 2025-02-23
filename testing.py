@@ -77,8 +77,8 @@ payload = {
                 "originPlaceId": {"iata": "YVR"},  # Vancouver
                 "destinationPlaceId": {"iata": "LAX"},  # Los Angeles
                 "date": {
-                    "year": 2024,
-                    "month": 12,
+                    "year": 2025,
+                    "month": 3,
                     "day": 1
                 }
             }
