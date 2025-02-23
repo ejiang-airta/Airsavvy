@@ -1,0 +1,11 @@
+Issue #,Description,Status,Symptom,Fix Applied
+001,Book Now button does not link directly to selected flight but to airline homepage,Unresolved (Bug 001),"Clicking 'Book Now' takes user to airline website, but not directly to the selected flight",Tabled for future improvement; requires deeper investigation into airline URL structures
+002,Oxylabs API returns limited flight results (even when more are available on Google Flights),Unresolved (Limitation 002),"Only 4 flights are returned despite requesting more (e.g., 10)","Implemented pagination, but API still limits results. Needs Oxylabs support confirmation"
+003,SSL certificate verification error when calling Oxylabs API,Resolved,requests.exceptions.SSLError: CERTIFICATE_VERIFY_FAILED,"Installed/upgraded OpenSSL, set correct Python SSL certificate path"
+004,Unauthorized API error when calling Oxylabs API,Resolved,API Error: 401 - Unauthorized,Verified and corrected API credentials
+005,Oxylabs API 'google_flights' source not supported,Resolved,API Error: 400 - Unsupported source,Changed API source from 'google_flights' to 'universal'
+006,User cannot select return date for round-trip flights,Resolved,Selecting 'Round-trip' does not show return date input,Modified UI to dynamically show return date when 'Round-trip' is selected
+007,'Direct' vs. 'Any' flight type filter not working,Resolved,Selecting 'Nonstop Only' still shows connecting flights,Added correct filtering logic to API payload and response processing
+008,"API returns prices with commas, causing parsing error",Resolved,"ValueError: invalid literal for int() with base 10: '1,011'",Modified code to remove commas before converting price to integer
+009,Dynamic selection of 'Top N' flights instead of fixed Top 3,Resolved,"Previously hardcoded Top 3 flights, now user can select 3-10 flights",Added slider input for user selection and updated display logic
+010,API results showing fewer flights than expected despite pagination,Resolved,"Pagination was not applied properly, resulting in only first-page results",Modified response processing to merge results from multiple pages

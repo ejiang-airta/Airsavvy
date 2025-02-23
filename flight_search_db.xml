@@ -1,0 +1,52 @@
+<mxfile host="app.diagrams.net" agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36" version="26.0.16">
+  <diagram id="FlightSearchDB" name="FlightSearchDB">
+    <mxGraphModel dx="1221" dy="626" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="850" pageHeight="1100" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="users" value="user_id (PK)&lt;br&gt;email&lt;br&gt;password_hash&lt;br&gt;created_at" style="rounded=0;whiteSpace=wrap;html=1;" parent="1" vertex="1">
+          <mxGeometry x="40" y="60" width="180" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="searches" value="search_id (PK)&lt;br&gt;user_id (FK)&lt;br&gt;origin&lt;br&gt;destination&lt;br&gt;departure_date&lt;br&gt;return_date&lt;br&gt;currency&lt;br&gt;searched_at" style="rounded=0;whiteSpace=wrap;html=1;" parent="1" vertex="1">
+          <mxGeometry x="300" y="40" width="200" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="flights" value="flight_id (PK)&lt;br&gt;search_id (FK)&lt;br&gt;airline&lt;br&gt;price&lt;br&gt;duration&lt;br&gt;type&lt;br&gt;booking_url" style="rounded=0;whiteSpace=wrap;html=1;" parent="1" vertex="1">
+          <mxGeometry x="600" y="50" width="200" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="alerts" value="alert_id (PK)&lt;br&gt;user_id (FK)&lt;br&gt;origin&lt;br&gt;destination&lt;br&gt;max_price&lt;br&gt;email_alert&lt;br&gt;created_at" style="rounded=0;whiteSpace=wrap;html=1;" parent="1" vertex="1">
+          <mxGeometry x="300" y="240" width="200" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="rel_users_searches" style="endArrow=block;" parent="1" source="searches" target="users" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="rel_searches_flights" style="endArrow=block;" parent="1" source="flights" target="searches" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="rel_users_alerts" style="endArrow=block;exitX=0.005;exitY=0.426;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" parent="1" source="alerts" target="users" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="R3saLiH2oyPPvegzMUJG-2" value="Users" style="text;strokeColor=none;align=center;fillColor=none;html=1;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+          <mxGeometry x="50" y="10" width="60" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="R3saLiH2oyPPvegzMUJG-3" value="alerts" style="text;strokeColor=none;align=center;fillColor=none;html=1;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+          <mxGeometry x="300" y="210" width="80" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="R3saLiH2oyPPvegzMUJG-4" value="flight_searchs" style="text;strokeColor=none;align=center;fillColor=none;html=1;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+          <mxGeometry x="300" y="10" width="80" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="R3saLiH2oyPPvegzMUJG-5" value="flight_results" style="text;strokeColor=none;align=center;fillColor=none;html=1;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+          <mxGeometry x="600" y="10" width="80" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="R3saLiH2oyPPvegzMUJG-6" value="user_id" style="text;strokeColor=none;align=center;fillColor=none;html=1;verticalAlign=middle;whiteSpace=wrap;rounded=0;rotation=39;" vertex="1" parent="1">
+          <mxGeometry x="160" y="190" width="80" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="R3saLiH2oyPPvegzMUJG-7" value="user_id" style="text;strokeColor=none;align=center;fillColor=none;html=1;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+          <mxGeometry x="220" y="80" width="80" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="R3saLiH2oyPPvegzMUJG-8" value="search_id" style="text;strokeColor=none;align=center;fillColor=none;html=1;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+          <mxGeometry x="510" y="80" width="80" height="30" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

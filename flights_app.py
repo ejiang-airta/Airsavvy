@@ -26,11 +26,17 @@ API_URL = "https://realtime.oxylabs.io/v1/queries"
 st.title("✈️ Cheapest Airfare Finder")
 st.write("Enter your travel details below:")
 
+# Allow users to select currency (USD/CAD):
+currency = st.radio("Select Currency:", ["USD", "CAD"])
+
 # Add One-way / Round-trip selection
 trip_type = st.radio("Select Trip Type:", ["One-way", "Round-trip"])
 
 # Add Direct / Connecting flight filter
 flight_type = st.radio("Flight Type:", ["Any", "Nonstop Only"])
+
+# Allow user to select the number of top flights to display (between 3 and 10)
+top_n = st.slider("Select number of top flights to display:", min_value=3, max_value=10, value=3)
 
 # User inputs for FROM/TO locations and travel dates:
 from_location = st.text_input("From (Airport Code)", value="YVR")
@@ -38,6 +44,12 @@ to_location = st.text_input("To (Airport Code)", value="PEK")
 
 # Departure date input
 departure_date = st.date_input("Select Departure Date", datetime.today() + timedelta(days=2))
+
+# Allow users to choose sorting criteria:
+# sort_option = st.selectbox(
+#     "Sort flights by:",
+#     ["Lowest Price", "Shortest Duration", "Preferred Airline"]
+# )
 
 # Show return date input ONLY if Round-trip is selected
 return_date = None
@@ -62,11 +74,14 @@ if st.button("🔍 Search Flights"):
             "source": "google_search",
             "query": query,
             "parse": "true",
-            "trip_type": "roundtrip" if trip_type == "Round-trip" else "oneway",  # Match user's selection
-            "filters": {"stops": "0" if flight_type == "Nonstop Only" else "any"  # Apply nonstop filter
+            #"trip_type": "roundtrip" if trip_type == "Round-trip" else "oneway",  # Match user's selection
+            #"filters": {"stops": "0" if flight_type == "Nonstop Only" else "any",  # Apply nonstop filter
+            "limit": 10,  # Request up to 10 flights
+            "pages": 3,    # Try fetching 2 pages of results to resolve response only returning 1 page or 4 results    
+            "curr": currency  # Pass the selected currency to the API request   
             }
-        }
-
+        print(f"DEBUG: Sending request to Oxylabs API with currency: {currency}")
+        print(f"DEBUG: Payload: {payload}")
 
         # Make the API call
         response = requests.post(API_URL, json=payload, auth=(OXYLABS_USERNAME, OXYLABS_PASSWORD), verify=certifi.where())
@@ -75,11 +90,24 @@ if st.button("🔍 Search Flights"):
         if response.status_code == 200:
             data = response.json()
 
+            # Debug: Print full API response to check for flight limits:
+            print("DEBUG: Full API Response:")
+            print(json.dumps(data, indent=2))
+
+            # Extract flights
+            flights = []
+            for result in data["results"]:  # Iterate through all pages in results
+                if "content" in result and "results" in result["content"] and "flights" in result["content"]["results"]:
+                    flights.extend(result["content"]["results"]["flights"]["results"])  # Merge flights from each page
+
+            print(f"DEBUG: Total flights received from API after pagination: {len(flights)}")
+
             # Extract flight results
             try:
                 flights = data["results"][0]["content"]["results"]["flights"]["results"]
                 print("FLIGHT TYPES RETURNED:", [flight["type"] for flight in flights])
-                
+                print(f"DEBUG: Total flights received from API: {len(flights)}")
+
                 # Apply filtering for "Nonstop Only"
                 if flight_type == "Nonstop Only":
                     flights = [flight for flight in flights if flight["type"].lower() == "nonstop"]
@@ -88,19 +116,34 @@ if st.button("🔍 Search Flights"):
                     st.warning("No flights found. Try a different search.")
 
                 # Sort flights by price (ascending order)
-                flights = sorted(flights, key=lambda x: int(x["price"].replace("$", "").replace(",", "")))
+                #flights = sorted(flights, key=lambda x: int(x["price"].replace("$", "").replace(",", "")))
+                # Function to generate the correct numeric price:
+                def extract_numeric_price(price_str):
+                    """Extracts the numeric price from a string, returns None if not convertible."""
+                    try:
+                        return int(price_str.replace("$", "").replace(",", ""))
+                    except ValueError:
+                        return float('inf')  # Assign an infinite value to push it to the end of sorting
+            
+                # Sort flights by price (ascending order)
+                flights = sorted(flights, key=lambda x: extract_numeric_price(x["price"]))
 
                 # Find the lowest price for comparison
                 lowest_price = int(flights[0]["price"].replace("$", "").replace(",", ""))
 
-                # Show only top 3 results
-                st.subheader("📌 Top 3 Flight Options:")
-                for i, flight in enumerate(flights[:3], 1):
+                # Show only top 3 (or N based on user selection) results
+                st.subheader(f"📌 Top {top_n} Flight Options:")
+                
+                for i, flight in enumerate(flights[:top_n], 1):
                     st.markdown(f"### ✈️ Option {i}")
                     st.write(f"**Airline:** {flight['airline']}")
                     st.write(f"**Type:** {flight['type']}")
                     st.write(f"**Price:** {flight['price']}")
                     st.write(f"**Duration:** {flight['duration']}")
+                    # st.write(f"**Flight Number:** {flight['Flight Number']}")
+                    # st.write(f"**Departure Time:** {flight['Departure Time']}")
+                    # st.write(f"**Arrival Time:** {flight['Arrival Time']}")
+                    # st.write(f"**URL:** {flight['url']}")
 
                     # ✅ Generate Pros & Cons
                     pros = []
@@ -160,50 +203,73 @@ if st.button("🔍 Search Flights"):
                     #     unsafe_allow_html=True
                     # )
                     
-                    # Function to generate the correct booking URL
+                  # Function to generate the correct booking URL
                     def get_booking_url(flight, from_location, to_location, departure_date, return_date, trip_type):
-                        """Generates a direct booking URL for the given airline, or falls back to Google Flights."""
-                        airline = flight["airline"]
-                        google_flights_url = flight["url"]  # Fallback option
-
+                        """Generates a Google Flights link that directly leads to the selected flight."""
+                        
                         # Convert dates to YYYY-MM-DD format
                         formatted_departure_date = departure_date.strftime("%Y-%m-%d")
                         formatted_return_date = return_date.strftime("%Y-%m-%d") if return_date else ""
 
-                        # Airline-specific booking URL patterns
-                        AIRLINE_BOOKING_URLS = {
-                            "United": f"https://www.united.com/en/us/book-flight?from={from_location}&to={to_location}&departdate={formatted_departure_date}{'&returndate=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
-                            "American Airlines": f"https://www.aa.com/reservation/find-flights?origin={from_location}&destination={to_location}&departDate={formatted_departure_date}{'&returnDate=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
-                            "Alaska Airlines": f"https://www.alaskaair.com/planbook/flights/select?from={from_location}&to={to_location}&departure={formatted_departure_date}{'&return=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
-                            "WestJet": f"https://www.westjet.com/en-ca/book-trip/select-flight?origin={from_location}&destination={to_location}&depart={formatted_departure_date}{'&return=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
-                            "Delta": f"https://www.delta.com/flight-search/book-a-flight?Origin={from_location}&Destination={to_location}&DepartureDate={formatted_departure_date}{'&ReturnDate=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
-                            "Air Canada": f"https://www.aircanada.com/ca/en/aco/home/book?origin={from_location}&destination={to_location}&departureDate={formatted_departure_date}{'&returnDate=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
-                            "JetBlue": f"https://book.jetblue.com/B6/webqtrip.html?searchType=NORMAL&origin={from_location}&destination={to_location}&depart={formatted_departure_date}{'&return=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
-                            "Spirit Airlines": f"https://www.spirit.com/Default.aspx?search={from_location}-{to_location}-{formatted_departure_date}{'-' + formatted_return_date if trip_type == 'Round-trip' else ''}",
-                            "Frontier Airlines": f"https://www.flyfrontier.com/booking?from={from_location}&to={to_location}&depart={formatted_departure_date}{'&return=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
-                            "Southwest Airlines": f"https://www.southwest.com/air/booking/select.html?originationAirportCode={from_location}&destinationAirportCode={to_location}&departureDate={formatted_departure_date}{'&returnDate=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
-                            "Hawaiian Airlines": f"https://www.hawaiianairlines.com/book/flights?searchType=TRIP&origin={from_location}&destination={to_location}&date1={formatted_departure_date}{'&date2=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
-                            "Sun Country Airlines": f"https://www.suncountry.com/booking/select-flights.html?origin={from_location}&destination={to_location}&departureDate={formatted_departure_date}{'&returnDate=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
-                            "Porter Airlines": f"https://www.flyporter.com/en-ca/book-flights/where-we-fly?origin={from_location}&destination={to_location}&depart={formatted_departure_date}{'&return=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
-                            "Air Transat": f"https://www.airtransat.com/en-CA/book/flight?origin={from_location}&destination={to_location}&departureDate={formatted_departure_date}{'&returnDate=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
-                            "Air France": f"https://www.airfrance.us/cgi-bin/AF/US/en/common/home/flights/ticket-plane.do?origin={from_location}&destination={to_location}&outboundDate={formatted_departure_date}{'&returnDate=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
-                            "KLM": f"https://www.klm.com/travel/us_en/apps/ebt/ebt_home.htm?origin={from_location}&destination={to_location}&departureDate={formatted_departure_date}{'&returnDate=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
-                            "Emirates": f"https://www.emirates.com/us/english/book/flights?from={from_location}&to={to_location}&depart={formatted_departure_date}{'&return=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
-                            "Qatar Airways": f"https://www.qatarairways.com/en-us/search-results?Origin={from_location}&Destination={to_location}&DepartureDate={formatted_departure_date}{'&ReturnDate=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
-                            "Cathay Pacific": f"https://book.cathaypacific.com/en-us/search-results?Origin={from_location}&Destination={to_location}&DepartureDate={formatted_departure_date}{'&ReturnDate=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
-                            "Singapore Airlines": f"https://www.singaporeair.com/en_UK/us/plan-and-book/your-booking/?origin={from_location}&destination={to_location}&departure={formatted_departure_date}{'&return=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
-                            "Korean Air": f"https://www.koreanair.com/booking/search?bookingType=R&origin={from_location}&destination={to_location}&departure={formatted_departure_date}{'&return=' + formatted_return_date if trip_type == 'Round-trip' else ''}"
-                        }
+                        # Construct Google Flights direct URL
+                        google_flights_url = (
+                            f"https://www.google.com/travel/flights?"
+                            f"q=Flights+from+{from_location}+to+{to_location}+on+{formatted_departure_date}"
+                        )
 
-                        # Return the correct URL
-                        if airline in AIRLINE_BOOKING_URLS:
-                            return AIRLINE_BOOKING_URLS[airline]
+                        # If round trip, include return date
+                        if trip_type == "Round-trip":
+                            google_flights_url += f"+returning+on+{formatted_return_date}"
 
-                        return google_flights_url  # Fallback if airline not listed
+                        google_flights_url += f"&curr={currency}"  # Add currency parameter
+
+                        return google_flights_url
+                    # commented out for now due to directly go to airline website doesn't work, 
+                    # so will be use above code block to go to google flights site
+                    # def get_booking_url(flight, from_location, to_location, departure_date, return_date, trip_type):
+                    #     """Generates a direct booking URL for the given airline, or falls back to Google Flights."""
+                    #     airline = flight["airline"]
+                    #     google_flights_url = flight["url"]  # Fallback option
+
+                    #     # Convert dates to YYYY-MM-DD format
+                    #     formatted_departure_date = departure_date.strftime("%Y-%m-%d")
+                    #     formatted_return_date = return_date.strftime("%Y-%m-%d") if return_date else ""
+
+                    #     # Airline-specific booking URL patterns
+                    #     AIRLINE_BOOKING_URLS = {
+                    #         "United": f"https://www.united.com/en/us/book-flight?from={from_location}&to={to_location}&departdate={formatted_departure_date}{'&returndate=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
+                    #         "American Airlines": f"https://www.aa.com/reservation/find-flights?origin={from_location}&destination={to_location}&departDate={formatted_departure_date}{'&returnDate=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
+                    #         "Alaska Airlines": f"https://www.alaskaair.com/planbook/flights/select?from={from_location}&to={to_location}&departure={formatted_departure_date}{'&return=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
+                    #         "WestJet": f"https://www.westjet.com/en-ca/book-trip/select-flight?origin={from_location}&destination={to_location}&depart={formatted_departure_date}{'&return=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
+                    #         "Delta": f"https://www.delta.com/flight-search/book-a-flight?Origin={from_location}&Destination={to_location}&DepartureDate={formatted_departure_date}{'&ReturnDate=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
+                    #         "Air Canada": f"https://www.aircanada.com/ca/en/aco/home/book?origin={from_location}&destination={to_location}&departureDate={formatted_departure_date}{'&returnDate=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
+                    #         "JetBlue": f"https://book.jetblue.com/B6/webqtrip.html?searchType=NORMAL&origin={from_location}&destination={to_location}&depart={formatted_departure_date}{'&return=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
+                    #         "Spirit Airlines": f"https://www.spirit.com/Default.aspx?search={from_location}-{to_location}-{formatted_departure_date}{'-' + formatted_return_date if trip_type == 'Round-trip' else ''}",
+                    #         "Frontier Airlines": f"https://www.flyfrontier.com/booking?from={from_location}&to={to_location}&depart={formatted_departure_date}{'&return=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
+                    #         "Southwest Airlines": f"https://www.southwest.com/air/booking/select.html?originationAirportCode={from_location}&destinationAirportCode={to_location}&departureDate={formatted_departure_date}{'&returnDate=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
+                    #         "Hawaiian Airlines": f"https://www.hawaiianairlines.com/book/flights?searchType=TRIP&origin={from_location}&destination={to_location}&date1={formatted_departure_date}{'&date2=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
+                    #         "Sun Country Airlines": f"https://www.suncountry.com/booking/select-flights.html?origin={from_location}&destination={to_location}&departureDate={formatted_departure_date}{'&returnDate=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
+                    #         "Porter Airlines": f"https://www.flyporter.com/en-ca/book-flights/where-we-fly?origin={from_location}&destination={to_location}&depart={formatted_departure_date}{'&return=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
+                    #         "Air Transat": f"https://www.airtransat.com/en-CA/book/flight?origin={from_location}&destination={to_location}&departureDate={formatted_departure_date}{'&returnDate=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
+                    #         "Air France": f"https://www.airfrance.us/cgi-bin/AF/US/en/common/home/flights/ticket-plane.do?origin={from_location}&destination={to_location}&outboundDate={formatted_departure_date}{'&returnDate=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
+                    #         "KLM": f"https://www.klm.com/travel/us_en/apps/ebt/ebt_home.htm?origin={from_location}&destination={to_location}&departureDate={formatted_departure_date}{'&returnDate=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
+                    #         "Emirates": f"https://www.emirates.com/us/english/book/flights?from={from_location}&to={to_location}&depart={formatted_departure_date}{'&return=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
+                    #         "Qatar Airways": f"https://www.qatarairways.com/en-us/search-results?Origin={from_location}&Destination={to_location}&DepartureDate={formatted_departure_date}{'&ReturnDate=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
+                    #         "Cathay Pacific": f"https://book.cathaypacific.com/en-us/search-results?Origin={from_location}&Destination={to_location}&DepartureDate={formatted_departure_date}{'&ReturnDate=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
+                    #         "Singapore Airlines": f"https://www.singaporeair.com/en_UK/us/plan-and-book/your-booking/?origin={from_location}&destination={to_location}&departure={formatted_departure_date}{'&return=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
+                    #         "Korean Air": f"https://www.koreanair.com/booking/search?bookingType=R&origin={from_location}&destination={to_location}&departure={formatted_departure_date}{'&return=' + formatted_return_date if trip_type == 'Round-trip' else ''}"
+                    #     }
+
+                    #     # Return the correct URL
+                    #     if airline in AIRLINE_BOOKING_URLS:
+                    #         return AIRLINE_BOOKING_URLS[airline]
+
+                    #     return google_flights_url  # Fallback if airline not listed
 
                     
                     # Generate the booking URL
                     booking_url = get_booking_url(flight, from_location, to_location, departure_date, return_date, trip_type)
+                    print(f"DEBUG: Booking URL for {flight['airline']} - {booking_url}")
 
                     # Add a "Book Now" button with the correct link
                     st.markdown(
