@@ -6,6 +6,11 @@ from datetime import datetime, timedelta
 import urllib.parse
 import certifi
 import ssl
+from sqlalchemy.orm import sessionmaker
+from create_db import engine, User, FlightSearch, FlightResult
+
+# Create DB session
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # Environment setup:
 # Set API credentials (Use environment variables if set)
@@ -20,6 +25,45 @@ API_URL = "https://realtime.oxylabs.io/v1/queries"
 # Force requests to use system SSL certificates
 # requests.get("https://www.google.com", verify=certifi.where())
 #ssl_context = ssl.create_default_context(cafile=certifi.where())
+
+# Functional library block:
+# Function to generate the correct booking URL
+def get_booking_url(flight, from_location, to_location, departure_date, return_date, trip_type):
+    """Generates a Google Flights link that directly leads to the selected flight."""
+    
+    # Convert dates to YYYY-MM-DD format
+    formatted_departure_date = departure_date.strftime("%Y-%m-%d")
+    formatted_return_date = return_date.strftime("%Y-%m-%d") if return_date else ""
+
+    # Construct Google Flights direct URL
+    google_flights_url = (
+        f"https://www.google.com/travel/flights?"
+        f"q=Flights+from+{from_location}+to+{to_location}+on+{formatted_departure_date}"
+    )
+
+    # If round trip, include return date
+    if trip_type == "Round-trip":
+        google_flights_url += f"+returning+on+{formatted_return_date}"
+
+    google_flights_url += f"&curr={currency}"  # Add currency parameter
+
+    return google_flights_url
+
+# Function to generate the correct numeric price:
+def extract_numeric_price(price_str):
+    """Extracts the numeric price from a string, returns None if not convertible."""
+    try:
+        return int(price_str.replace("$", "").replace(",", ""))
+    except ValueError:
+        return float('inf')  # Assign an infinite value to push it to the end of sorting
+
+# Helper function
+def parse_datetime_or_none(date_str):
+    try:
+        return datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S")
+    except (TypeError, ValueError):
+        return None
+
 
 # Application code:
 # Streamlit UI
@@ -56,231 +100,174 @@ return_date = None
 if trip_type == "Round-trip":
     return_date = st.date_input("Select Return Date", departure_date + timedelta(days=7))  # Default return 1 week later
 
-
 if st.button("🔍 Search Flights"):
     with st.spinner("Searching for the best flight deals..."):
-        st.write(f"Searching for flights from **{from_location}** to **{to_location}** on **{departure_date}**...")
+        print("🚩 Starting Search Flights Logic")
 
-        # Format the query
+        session = SessionLocal()
+
+        user_email = "service@airta.co"
+        user = session.query(User).filter_by(email=user_email).first()
+
+        if not user:
+            print(f"❌ User '{user_email}' NOT found!")
+            st.error(f"User '{user_email}' not found in the database!")
+            session.close()
+
+        print(f"✅ User found! (User ID: {user.user_id})")
+        st.success(f"✅ User found! (User ID: {user.user_id})")
+
         query = f"Flights from {from_location} to {to_location} on {departure_date.strftime('%Y-%m-%d')}"
-        # If Round-trip is selected, add return date
         if trip_type == "Round-trip" and return_date:
             query += f" returning on {return_date.strftime('%Y-%m-%d')}"
         
-        print("Query:", query)
+        print(f"🚩 Query: {query}")
 
-        # API request payload
         payload = {
             "source": "google_search",
             "query": query,
             "parse": "true",
-            #"trip_type": "roundtrip" if trip_type == "Round-trip" else "oneway",  # Match user's selection
-            #"filters": {"stops": "0" if flight_type == "Nonstop Only" else "any",  # Apply nonstop filter
-            "limit": 10,  # Request up to 10 flights
-            "pages": 3,    # Try fetching 2 pages of results to resolve response only returning 1 page or 4 results    
-            "curr": currency  # Pass the selected currency to the API request   
-            }
-        print(f"DEBUG: Sending request to Oxylabs API with currency: {currency}")
-        print(f"DEBUG: Payload: {payload}")
+            "limit": 10,
+            "pages": 3,
+            "curr": currency
+        }
 
-        # Make the API call
+        print("🚩 Sending request to Oxylabs API...")
         response = requests.post(API_URL, json=payload, auth=(OXYLABS_USERNAME, OXYLABS_PASSWORD), verify=certifi.where())
-        #response = requests.post(API_URL, json=payload, auth=(OXYLABS_USERNAME, OXYLABS_PASSWORD), verify=False)
 
         if response.status_code == 200:
+            print("✅ Received 200 OK from Oxylabs API.")
             data = response.json()
 
-            # Debug: Print full API response to check for flight limits:
-            print("DEBUG: Full API Response:")
-            print(json.dumps(data, indent=2))
-
-            # Extract flights
             flights = []
-            for result in data["results"]:  # Iterate through all pages in results
-                if "content" in result and "results" in result["content"] and "flights" in result["content"]["results"]:
-                    flights.extend(result["content"]["results"]["flights"]["results"])  # Merge flights from each page
+            for result in data.get("results", []):
+                flights.extend(result.get("content", {}).get("results", {}).get("flights", {}).get("results", []))
 
-            print(f"DEBUG: Total flights received from API after pagination: {len(flights)}")
+            print(f"🚩 Flights extracted from API: {len(flights)}")
 
-            # Extract flight results
-            try:
-                flights = data["results"][0]["content"]["results"]["flights"]["results"]
-                print("FLIGHT TYPES RETURNED:", [flight["type"] for flight in flights])
-                print(f"DEBUG: Total flights received from API: {len(flights)}")
+            if flights:
+                flight_search = FlightSearch(
+                    user_id=user.user_id,
+                    origin=from_location,
+                    destination=to_location,
+                    departure_date=departure_date,
+                    return_date=return_date if trip_type == "Round-trip" else None,
+                    trip_type=trip_type.lower(),
+                    search_URL=query,
+                    created_at=datetime.now()
+                )
+                session.add(flight_search)
+                session.commit()
+                print(f"✅ Flight search recorded! (Search ID: {flight_search.search_id})")
+                st.success(f"✅ Flight search recorded! (Search ID: {flight_search.search_id})")
 
-                # Apply filtering for "Nonstop Only"
-                if flight_type == "Nonstop Only":
-                    flights = [flight for flight in flights if flight["type"].lower() == "nonstop"]
-                
-                if not flights:
-                    st.warning("No flights found. Try a different search.")
-
-                # Sort flights by price (ascending order)
-                #flights = sorted(flights, key=lambda x: int(x["price"].replace("$", "").replace(",", "")))
-                # Function to generate the correct numeric price:
-                def extract_numeric_price(price_str):
-                    """Extracts the numeric price from a string, returns None if not convertible."""
+                for flight in flights[:top_n]:
                     try:
-                        return int(price_str.replace("$", "").replace(",", ""))
-                    except ValueError:
-                        return float('inf')  # Assign an infinite value to push it to the end of sorting
-            
-                # Sort flights by price (ascending order)
-                flights = sorted(flights, key=lambda x: extract_numeric_price(x["price"]))
-
-                # Find the lowest price for comparison
-                lowest_price = int(flights[0]["price"].replace("$", "").replace(",", ""))
-
-                # Show only top 3 (or N based on user selection) results
-                st.subheader(f"📌 Top {top_n} Flight Options:")
-                
-                for i, flight in enumerate(flights[:top_n], 1):
-                    st.markdown(f"### ✈️ Option {i}")
-                    st.write(f"**Airline:** {flight['airline']}")
-                    st.write(f"**Type:** {flight['type']}")
-                    st.write(f"**Price:** {flight['price']}")
-                    st.write(f"**Duration:** {flight['duration']}")
-                    # st.write(f"**Flight Number:** {flight['Flight Number']}")
-                    # st.write(f"**Departure Time:** {flight['Departure Time']}")
-                    # st.write(f"**Arrival Time:** {flight['Arrival Time']}")
-                    # st.write(f"**URL:** {flight['url']}")
-
-                    # ✅ Generate Pros & Cons
-                    pros = []
-                    cons = []
-
-                    # Check flight type
-                    if flight["type"].lower() == "nonstop":
-                        pros.append("No layovers ✅")
-                    else:
-                        cons.append("Has layovers ❌")
-
-                    # Check flight duration
-                    # Extract duration correctly
-                    duration_str = flight["duration"]
-
-                    # Handle "1d 5h 30m" format
-                    days = 0
-                    if "d" in duration_str:
-                        parts = duration_str.split("d")
-                        days = int(parts[0].strip())  # Extract number of days
-                        duration_str = parts[1].strip()  # Remove "1d" part
-
-                    # Extract hours correctly
-                    hours = 0
-                    if "h" in duration_str:
-                        hours = int(duration_str.split("h")[0].strip())
-
-                    # Convert total duration to hours
-                    duration_hours = (days * 24) + hours
-
-                    if duration_hours < 6:
-                        pros.append("Short travel time ✅")
-                    elif duration_hours > 12:
-                        cons.append("Long travel time ❌")
-
-                    # Compare price
-                    price_int = int(flight["price"].replace("$", "").replace(",", ""))
-                    if price_int == lowest_price:
-                        pros.append("Cheapest option ✅")
-                    elif price_int > (lowest_price * 1.5):  # If more than 50% higher than the cheapest
-                        cons.append("Expensive compared to cheapest option ❌")
-
-                    # Display Pros & Cons
-                    if pros:
-                        st.write("**✅ Pros:**")
-                        for pro in pros:
-                            st.write(f"- {pro}")
-
-                    if cons:
-                        st.write("**❌ Cons:**")
-                        for con in cons:
-                            st.write(f"- {con}")
-
-                    # Add a "Book Now" button with a proper link
-                    # st.markdown(
-                    #     f'<a href="{flight["url"]}" target="_blank"><button style="background-color:#4CAF50;color:white;padding:8px 16px;border:none;border-radius:4px;cursor:pointer;">Book Now</button></a>',
-                    #     unsafe_allow_html=True
-                    # )
-                    
-                  # Function to generate the correct booking URL
-                    def get_booking_url(flight, from_location, to_location, departure_date, return_date, trip_type):
-                        """Generates a Google Flights link that directly leads to the selected flight."""
-                        
-                        # Convert dates to YYYY-MM-DD format
-                        formatted_departure_date = departure_date.strftime("%Y-%m-%d")
-                        formatted_return_date = return_date.strftime("%Y-%m-%d") if return_date else ""
-
-                        # Construct Google Flights direct URL
-                        google_flights_url = (
-                            f"https://www.google.com/travel/flights?"
-                            f"q=Flights+from+{from_location}+to+{to_location}+on+{formatted_departure_date}"
+                        print("🚩 Inserting flight result:", flight)  # detailed debug
+                        flight_result = FlightResult(
+                            search_id=flight_search.search_id,
+                            airline=flight["airline"],
+                            price=float(flight["price"].replace("$", "").replace(",", "")),
+                            flight_number=flight.get("Flight Number", "N/A"),
+                            departure_time=parse_datetime_or_none(flight.get("Departure Time")),
+                            arrival_time=parse_datetime_or_none(flight.get("Arrival Time")),
+                            duration=flight["duration"],
+                            stops=flight["type"],
+                            booking_url=get_booking_url(
+                                flight, from_location, to_location, departure_date, return_date, trip_type
+                            ),
+                            created_at=datetime.now(),
+                            retrieved_at=datetime.now()
                         )
+                        session.add(flight_result)
+                        session.commit()
+                        print(f"✅ Inserted flight result successfully (ID: {flight_result.result_id})")
+                        st.success(f"✅ Inserted flight result: {flight['airline']} at ${flight_result.price}")
 
-                        # If round trip, include return date
-                        if trip_type == "Round-trip":
-                            google_flights_url += f"+returning+on+{formatted_return_date}"
-
-                        google_flights_url += f"&curr={currency}"  # Add currency parameter
-
-                        return google_flights_url
-                    # commented out for now due to directly go to airline website doesn't work, 
-                    # so will be use above code block to go to google flights site
-                    # def get_booking_url(flight, from_location, to_location, departure_date, return_date, trip_type):
-                    #     """Generates a direct booking URL for the given airline, or falls back to Google Flights."""
-                    #     airline = flight["airline"]
-                    #     google_flights_url = flight["url"]  # Fallback option
-
-                    #     # Convert dates to YYYY-MM-DD format
-                    #     formatted_departure_date = departure_date.strftime("%Y-%m-%d")
-                    #     formatted_return_date = return_date.strftime("%Y-%m-%d") if return_date else ""
-
-                    #     # Airline-specific booking URL patterns
-                    #     AIRLINE_BOOKING_URLS = {
-                    #         "United": f"https://www.united.com/en/us/book-flight?from={from_location}&to={to_location}&departdate={formatted_departure_date}{'&returndate=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
-                    #         "American Airlines": f"https://www.aa.com/reservation/find-flights?origin={from_location}&destination={to_location}&departDate={formatted_departure_date}{'&returnDate=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
-                    #         "Alaska Airlines": f"https://www.alaskaair.com/planbook/flights/select?from={from_location}&to={to_location}&departure={formatted_departure_date}{'&return=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
-                    #         "WestJet": f"https://www.westjet.com/en-ca/book-trip/select-flight?origin={from_location}&destination={to_location}&depart={formatted_departure_date}{'&return=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
-                    #         "Delta": f"https://www.delta.com/flight-search/book-a-flight?Origin={from_location}&Destination={to_location}&DepartureDate={formatted_departure_date}{'&ReturnDate=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
-                    #         "Air Canada": f"https://www.aircanada.com/ca/en/aco/home/book?origin={from_location}&destination={to_location}&departureDate={formatted_departure_date}{'&returnDate=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
-                    #         "JetBlue": f"https://book.jetblue.com/B6/webqtrip.html?searchType=NORMAL&origin={from_location}&destination={to_location}&depart={formatted_departure_date}{'&return=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
-                    #         "Spirit Airlines": f"https://www.spirit.com/Default.aspx?search={from_location}-{to_location}-{formatted_departure_date}{'-' + formatted_return_date if trip_type == 'Round-trip' else ''}",
-                    #         "Frontier Airlines": f"https://www.flyfrontier.com/booking?from={from_location}&to={to_location}&depart={formatted_departure_date}{'&return=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
-                    #         "Southwest Airlines": f"https://www.southwest.com/air/booking/select.html?originationAirportCode={from_location}&destinationAirportCode={to_location}&departureDate={formatted_departure_date}{'&returnDate=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
-                    #         "Hawaiian Airlines": f"https://www.hawaiianairlines.com/book/flights?searchType=TRIP&origin={from_location}&destination={to_location}&date1={formatted_departure_date}{'&date2=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
-                    #         "Sun Country Airlines": f"https://www.suncountry.com/booking/select-flights.html?origin={from_location}&destination={to_location}&departureDate={formatted_departure_date}{'&returnDate=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
-                    #         "Porter Airlines": f"https://www.flyporter.com/en-ca/book-flights/where-we-fly?origin={from_location}&destination={to_location}&depart={formatted_departure_date}{'&return=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
-                    #         "Air Transat": f"https://www.airtransat.com/en-CA/book/flight?origin={from_location}&destination={to_location}&departureDate={formatted_departure_date}{'&returnDate=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
-                    #         "Air France": f"https://www.airfrance.us/cgi-bin/AF/US/en/common/home/flights/ticket-plane.do?origin={from_location}&destination={to_location}&outboundDate={formatted_departure_date}{'&returnDate=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
-                    #         "KLM": f"https://www.klm.com/travel/us_en/apps/ebt/ebt_home.htm?origin={from_location}&destination={to_location}&departureDate={formatted_departure_date}{'&returnDate=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
-                    #         "Emirates": f"https://www.emirates.com/us/english/book/flights?from={from_location}&to={to_location}&depart={formatted_departure_date}{'&return=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
-                    #         "Qatar Airways": f"https://www.qatarairways.com/en-us/search-results?Origin={from_location}&Destination={to_location}&DepartureDate={formatted_departure_date}{'&ReturnDate=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
-                    #         "Cathay Pacific": f"https://book.cathaypacific.com/en-us/search-results?Origin={from_location}&Destination={to_location}&DepartureDate={formatted_departure_date}{'&ReturnDate=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
-                    #         "Singapore Airlines": f"https://www.singaporeair.com/en_UK/us/plan-and-book/your-booking/?origin={from_location}&destination={to_location}&departure={formatted_departure_date}{'&return=' + formatted_return_date if trip_type == 'Round-trip' else ''}",
-                    #         "Korean Air": f"https://www.koreanair.com/booking/search?bookingType=R&origin={from_location}&destination={to_location}&departure={formatted_departure_date}{'&return=' + formatted_return_date if trip_type == 'Round-trip' else ''}"
-                    #     }
-
-                    #     # Return the correct URL
-                    #     if airline in AIRLINE_BOOKING_URLS:
-                    #         return AIRLINE_BOOKING_URLS[airline]
-
-                    #     return google_flights_url  # Fallback if airline not listed
-
-                    
-                    # Generate the booking URL
-                    booking_url = get_booking_url(flight, from_location, to_location, departure_date, return_date, trip_type)
-                    print(f"DEBUG: Booking URL for {flight['airline']} - {booking_url}")
-
-                    # Add a "Book Now" button with the correct link
-                    st.markdown(
-                        f'<a href="{booking_url}" target="_blank"><button style="background-color:#4CAF50;color:white;padding:8px 16px;border:none;border-radius:4px;cursor:pointer;">Book Now</button></a>',
-                        unsafe_allow_html=True
-                    )
-                    st.write("---")
-
-            except KeyError:
-                st.error("No flight data found. Try another search.")
+                    except Exception as e:
+                        session.rollback()
+                        print(f"❌ Failed inserting flight result due to error: {e}")
+                        st.error(f"❌ Failed inserting flight result: {e}")
         else:
+            print(f"❌ API Error: {response.status_code} - {response.text}")
             st.error(f"API Error: {response.status_code} - {response.text}")
 
+        session.close()
+        print("🚩 Database session closed.")
 
+# --- END DATABASE INTEGRATION ---
+
+        # Extract flight results
+        try:
+            flights = data["results"][0]["content"]["results"]["flights"]["results"]
+            print("FLIGHT TYPES RETURNED:", [flight["type"] for flight in flights])
+            print(f"DEBUG: Total flights received from API: {len(flights)}")
+
+            # Apply filtering for "Nonstop Only"
+            if flight_type == "Nonstop Only":
+                flights = [flight for flight in flights if flight["type"].lower() == "nonstop"]
+            
+            if not flights:
+                st.warning("No flights found. Try a different search.")
+                session.close()
+                print("Session closed at line 159.")
+
+            # Sort flights by price (ascending order)
+            flights = sorted(flights, key=lambda x: extract_numeric_price(x["price"]))
+
+            # Find the lowest price for comparison
+            lowest_price = int(flights[0]["price"].replace("$", "").replace(",", ""))
+
+            # Show only top N results
+            st.subheader(f"📌 Top {top_n} Flight Options:")
+
+            for i, flight in enumerate(flights[:top_n], 1):
+                st.markdown(f"### ✈️ Option {i}")
+                st.write(f"**Airline:** {flight['airline']}")
+                st.write(f"**Type:** {flight['type']}")
+                st.write(f"**Price:** {flight['price']}")
+                st.write(f"**Duration:** {flight['duration']}")
+
+                pros = []
+                cons = []
+
+                if flight["type"].lower() == "nonstop":
+                    pros.append("No layovers ✅")
+                else:
+                    cons.append("Has layovers ❌")
+
+                duration_str = flight["duration"]
+                days = int(duration_str.split("d")[0]) if "d" in duration_str else 0
+                hours = int(duration_str.split("h")[0].split()[-1]) if "h" in duration_str else 0
+                duration_hours = (days * 24) + hours
+
+                if duration_hours < 6:
+                    pros.append("Short travel time ✅")
+                elif duration_hours > 12:
+                    cons.append("Long travel time ❌")
+
+                price_int = int(flight["price"].replace("$", "").replace(",", ""))
+                if price_int == lowest_price:
+                    pros.append("Cheapest option ✅")
+                elif price_int > (lowest_price * 1.5):
+                    cons.append("Expensive compared to cheapest option ❌")
+
+                if pros:
+                    st.write("**✅ Pros:**")
+                    for pro in pros:
+                        st.write(f"- {pro}")
+
+                if cons:
+                    st.write("**❌ Cons:**")
+                    for con in cons:
+                        st.write(f"- {con}")
+
+                booking_url = get_booking_url(flight, from_location, to_location, departure_date, return_date, trip_type)
+                st.markdown(
+                    f'<a href="{booking_url}" target="_blank"><button style="background-color:#4CAF50;color:white;padding:8px 16px;border:none;border-radius:4px;cursor:pointer;">Book Now</button></a>',
+                    unsafe_allow_html=True
+                )
+                st.write("---")
+
+        except KeyError:
+            st.error("No flight data found. Try another search.")
