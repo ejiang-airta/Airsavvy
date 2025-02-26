@@ -110,6 +110,7 @@ class Alert(Base):
 engine = create_engine('sqlite:///flight_search_app.db')
 
 # ✅ Create Tables in Database
+SessionLocal = sessionmaker(bind=engine) # ✅ Create a session factory
 Base.metadata.create_all(engine)
 
 print("✅ Database tables created successfully!")

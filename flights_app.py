@@ -6,8 +6,8 @@ from datetime import datetime, timedelta, timezone
 import urllib.parse
 import certifi
 import ssl
-from sqlalchemy.orm import sessionmaker
-from create_db_old import engine, User, FlightSearch, FlightResult
+from sqlalchemy.orm import sessionmaker #, clear_mappers
+from create_db import engine, User, FlightSearch, FlightResult
 import streamlit_authenticator as stauth
 
 # Remove the coding block below which adds the login/register functionality to main page
@@ -107,6 +107,7 @@ if "user" not in st.session_state:
 
 if st.session_state["user"]:
     st.sidebar.write(f"👤 Logged in as: {st.session_state['user']['email']}")
+    user_email = st.session_state["user"]["email"]
     if st.sidebar.button("Logout"):
         requests.post(f"{BASE_URL}/logout")
         st.session_state["user"] = None
@@ -207,8 +208,12 @@ if st.button("🔍 Search Flights"):
 
         session = SessionLocal()
 
-        user_email = "service@airta.co"
+        #user_email = "service@airta.co"
         user = session.query(User).filter_by(email=user_email).first()
+        from sqlalchemy.orm import joinedload
+
+        user = session.query(User).options(joinedload(User.alerts)).filter_by(email=user_email).first()
+
 
         if not user:
             print(f"❌ User '{user_email}' NOT found!")
@@ -233,65 +238,106 @@ if st.button("🔍 Search Flights"):
             "curr": currency
         }
 
-        print("🚩 Sending request to Oxylabs API...")
-        response = requests.post(API_URL, json=payload, auth=(OXYLABS_USERNAME, OXYLABS_PASSWORD), verify=certifi.where())
+        print("🚩 Sending request to Oxylabs API... Bypassing for testing")
 
-        if response.status_code == 200:
-            print("✅ Received 200 OK from Oxylabs API.")
-            data = response.json()
+        # Mock response instead of calling Oxylabs API
+        data = {
+            "results": [
+                {
+                    "content": {
+                        "results": {
+                            "flights": {
+                                "results": [
+                                    {
+                                        "airline": "Air Canada",
+                                        "price": "$199",
+                                        "type": "nonstop",
+                                        "duration": "5h 30m",
+                                        "Flight Number": "AC123",
+                                        "Departure Time": "2025-03-01 10:00:00",
+                                        "Arrival Time": "2025-03-01 15:30:00"
+                                    },
+                                    {
+                                        "airline": "Delta",
+                                        "price": "$250",
+                                        "type": "1-stop",
+                                        "duration": "7h 45m",
+                                        "Flight Number": "DL456",
+                                        "Departure Time": "2025-03-01 08:00:00",
+                                        "Arrival Time": "2025-03-01 15:45:00"
+                                    }
+                                ]
+                            }
+                        }
+                    }
+                }
+            ]
+        }
 
-            flights = []
-            for result in data.get("results", []):
-                flights.extend(result.get("content", {}).get("results", {}).get("flights", {}).get("results", []))
+        print("✅ Using mock flight data.")
 
-            print(f"🚩 Flights extracted from API: {len(flights)}")
+        # Bypass API failure and continue with fake results
+        flights = data["results"][0]["content"]["results"]["flights"]["results"]
 
-            if flights:
-                flight_search = FlightSearch(
-                    user_id=user.user_id,
-                    origin=from_location,
-                    destination=to_location,
-                    departure_date=departure_date,
-                    return_date=return_date if trip_type == "Round-trip" else None,
-                    trip_type=trip_type.lower(),
-                    search_URL=query,
-                    created_at=datetime.now()
-                )
-                session.add(flight_search)
-                session.commit()
-                print(f"✅ Flight search recorded! (Search ID: {flight_search.search_id})")
-                st.success(f"✅ Flight search recorded! (Search ID: {flight_search.search_id})")
+        # bypassing the API call for debugging:
+        #response = requests.post(API_URL, json=payload, auth=(OXYLABS_USERNAME, OXYLABS_PASSWORD), verify=certifi.where())
 
-                for flight in flights[:top_n]:
-                    try:
-                        print("🚩 Inserting flight result:", flight)  # detailed debug
-                        flight_result = FlightResult(
-                            search_id=flight_search.search_id,
-                            airline=flight["airline"],
-                            price=float(flight["price"].replace("$", "").replace(",", "")),
-                            flight_number=flight.get("Flight Number", "N/A"),
-                            departure_time=parse_datetime_or_none(flight.get("Departure Time")),
-                            arrival_time=parse_datetime_or_none(flight.get("Arrival Time")),
-                            duration=flight["duration"],
-                            stops=flight["type"],
-                            booking_url=get_booking_url(
-                                flight, from_location, to_location, departure_date, return_date, trip_type
-                            ),
-                            created_at=datetime.now(),
-                            retrieved_at=datetime.now()
-                        )
-                        session.add(flight_result)
-                        session.commit()
-                        print(f"✅ Inserted flight result successfully (ID: {flight_result.result_id})")
-                        st.success(f"✅ Inserted flight result: {flight['airline']} at ${flight_result.price}")
+        # if response.status_code == 200:
+        #     print("✅ Received 200 OK from Oxylabs API.")
+        #     data = response.json()
 
-                    except Exception as e:
-                        session.rollback()
-                        print(f"❌ Failed inserting flight result due to error: {e}")
-                        st.error(f"❌ Failed inserting flight result: {e}")
-        else:
-            print(f"❌ API Error: {response.status_code} - {response.text}")
-            st.error(f"API Error: {response.status_code} - {response.text}")
+        #     flights = []
+        #     for result in data.get("results", []):
+        #         flights.extend(result.get("content", {}).get("results", {}).get("flights", {}).get("results", []))
+
+        #     print(f"🚩 Flights extracted from API: {len(flights)}")
+
+        #     if flights:
+        #         flight_search = FlightSearch(
+        #             user_id=user.user_id,
+        #             origin=from_location,
+        #             destination=to_location,
+        #             departure_date=departure_date,
+        #             return_date=return_date if trip_type == "Round-trip" else None,
+        #             trip_type=trip_type.lower(),
+        #             search_URL=query,
+        #             created_at=datetime.now()
+        #         )
+        #         session.add(flight_search)
+        #         session.commit()
+        #         print(f"✅ Flight search recorded! (Search ID: {flight_search.search_id})")
+        #         st.success(f"✅ Flight search recorded! (Search ID: {flight_search.search_id})")
+
+        #         for flight in flights[:top_n]:
+        #             try:
+        #                 print("🚩 Inserting flight result:", flight)  # detailed debug
+        #                 flight_result = FlightResult(
+        #                     search_id=flight_search.search_id,
+        #                     airline=flight["airline"],
+        #                     price=float(flight["price"].replace("$", "").replace(",", "")),
+        #                     flight_number=flight.get("Flight Number", "N/A"),
+        #                     departure_time=parse_datetime_or_none(flight.get("Departure Time")),
+        #                     arrival_time=parse_datetime_or_none(flight.get("Arrival Time")),
+        #                     duration=flight["duration"],
+        #                     stops=flight["type"],
+        #                     booking_url=get_booking_url(
+        #                         flight, from_location, to_location, departure_date, return_date, trip_type
+        #                     ),
+        #                     created_at=datetime.now(),
+        #                     retrieved_at=datetime.now()
+        #                 )
+        #                 session.add(flight_result)
+        #                 session.commit()
+        #                 print(f"✅ Inserted flight result successfully (ID: {flight_result.result_id})")
+        #                 st.success(f"✅ Inserted flight result: {flight['airline']} at ${flight_result.price}")
+
+        #             except Exception as e:
+        #                 session.rollback()
+        #                 print(f"❌ Failed inserting flight result due to error: {e}")
+        #                 st.error(f"❌ Failed inserting flight result: {e}")
+        # else:
+        #     print(f"❌ API Error: {response.status_code} - {response.text}")
+        #     st.error(f"API Error: {response.status_code} - {response.text}")
 
         session.close()
         print("🚩 Database session closed.")

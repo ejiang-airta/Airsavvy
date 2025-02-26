@@ -1,8 +1,8 @@
 import streamlit as st
 from datetime import datetime, timedelta,timezone
-from flask import Flask, request, jsonify, session
+from flask import Flask, request, jsonify
 from sqlalchemy.orm import sessionmaker
-from create_db import engine, User
+from create_db import engine, User, SessionLocal
 from werkzeug.security import generate_password_hash, check_password_hash
 import os
 import hashlib
@@ -61,32 +61,32 @@ with signup_tab:
 # 🚀 User Registration Endpoint
 @app.route("/register", methods=["POST"])
 def register():
-    if request.method != "POST":
-        return jsonify({"error": "Use a POST request to register."}), 405  # Method Not Allowed
-
     data = request.get_json()
-    
-    print("🚀 Received registration request:", data)  # Debugging line
-
     email = data.get("email")
     password = data.get("password")
     full_name = data.get("full_name")
 
-    print(f"📩 Email: {email}, 🔑 Password: {password}, 🏷 Full Name: {full_name}")  # Debugging line
+    print(f"🚀 Received registration request: {data}")  # Debugging print
 
-    print(email, password, full_name)
-    
-    if not email or not password or not full_name:
-        return jsonify({"error": "Missing required fields"}), 400
+    # ✅ Create a new SQLAlchemy session
+    db_session = SessionLocal()
 
-    # existing_user = session.query(User).filter_by(email=email).first()
-    # if existing_user:
-    #     return jsonify({"error": "User already exists"}), 400
+    # Check if user already exists
+    existing_user = db_session.query(User).filter_by(email=email).first()
+    if existing_user:
+        db_session.close()
+        return jsonify({"error": "User already exists"}), 400
 
+    # Hash password
     hashed_password = generate_password_hash(password)
-    new_user = User(email=email, password_hash=hashed_password, full_name=full_name, created_at=datetime.now(timezone.utc))
-    session.add(new_user)
-    session.commit()
+
+    # ✅ Create new user
+    new_user = User(email=email, password_hash=hashed_password, full_name=full_name)
+
+    # ✅ Add user to session and commit
+    db_session.add(new_user)
+    db_session.commit()
+    db_session.close()
 
     return jsonify({"message": "User registered successfully!"}), 200
 
