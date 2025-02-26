@@ -2,15 +2,46 @@ import streamlit as st
 import requests
 import json
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import urllib.parse
 import certifi
 import ssl
 from sqlalchemy.orm import sessionmaker
-from create_db import engine, User, FlightSearch, FlightResult
+from create_db_old import engine, User, FlightSearch, FlightResult
+import streamlit_authenticator as stauth
+
+# Remove the coding block below which adds the login/register functionality to main page
+# ✅ Redirect to Login if Not Authenticated
+# if "user_email" not in st.session_state:
+#     st.warning("You must log in first.")
+#     st.write("🔑 [Go to Login Page](http://127.0.0.1:5000/login)")
+#     #registration logic:
+#     st.subheader("📝 Register")
+#     register_email = st.text_input("Email")
+#     register_password = st.text_input("Password", type="password")
+#     register_fullname = st.text_input("Full Name")
+
+#     if st.button("Register"):
+#         if register_email and register_password and register_fullname:
+#             response = requests.post("http://127.0.0.1:5000/register", json={
+#                 "email": register_email,
+#                 "password": register_password,
+#                 "full_name": register_fullname
+#             })
+            
+#             if response.status_code == 200:
+#                 st.success("✅ Registration successful! You can now login.")
+#             else:
+#                 st.error(f"❌ Registration failed: {response.text}")
+#         else:
+#             st.warning("⚠️ Please fill in all fields before registering.")
+
+
+BASE_URL = "http://127.0.0.1:5000"  # Flask API
 
 # Create DB session
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+session = SessionLocal()
 
 # Environment setup:
 # Set API credentials (Use environment variables if set)
@@ -68,6 +99,76 @@ def parse_datetime_or_none(date_str):
 # Application code:
 # Streamlit UI
 st.title("✈️ Cheapest Airfare Finder")
+
+# Adding the authentication UI and user profile:
+# 🚀 Authentication UI
+if "user" not in st.session_state:
+    st.session_state["user"] = None
+
+if st.session_state["user"]:
+    st.sidebar.write(f"👤 Logged in as: {st.session_state['user']['email']}")
+    if st.sidebar.button("Logout"):
+        requests.post(f"{BASE_URL}/logout")
+        st.session_state["user"] = None
+        st.rerun()
+else:
+    st.sidebar.subheader("🔐 Login / Register")
+
+    # Selection for login or register
+    auth_mode = st.sidebar.radio("Select Mode:", ["Login", "Register"])
+
+    if auth_mode == "Login":
+        login_email = st.sidebar.text_input("Email", key="login_email")
+        login_password = st.sidebar.text_input("Password", type="password", key="login_password")
+
+        if st.sidebar.button("Login"):
+            response = requests.post(f"{BASE_URL}/login", json={"email": login_email, "password": login_password})
+            if response.status_code == 200:
+                st.session_state["user"] = {"email": login_email}
+                st.rerun()
+            else:
+                st.sidebar.error("Invalid credentials")
+
+    elif auth_mode == "Register":
+        register_email = st.sidebar.text_input("Email", key="register_email")
+        register_password = st.sidebar.text_input("Password", type="password", key="register_password")
+        full_name = st.sidebar.text_input("Full Name", key="register_fullname")
+
+        if st.sidebar.button("Register"):
+            if register_email and register_password and full_name:
+                response = requests.post(f"{BASE_URL}/register", json={
+                    "email": register_email,
+                    "password": register_password,
+                    "full_name": full_name
+                })
+
+                try:
+                    response_json = response.json()
+                    if response.status_code == 200:
+                        st.sidebar.success("✅ Registration successful! Please login.")
+                    else:
+                        st.sidebar.error(f"❌ Registration failed: {response_json.get('error', 'Unknown error')}")
+                except json.JSONDecodeError:
+                    st.sidebar.error("❌ Unexpected response from server.")
+            else:
+                st.sidebar.warning("⚠️ Please fill in all fields before registering.")
+
+# 🚀 User Profile
+if st.session_state["user"]:
+    st.subheader("🛠️ Update Preferences")
+    profile_response = requests.get(f"{BASE_URL}/profile")
+    
+    if profile_response.status_code == 200:
+        profile_data = profile_response.json()
+        currency = st.selectbox("Currency", ["USD", "CAD"], index=["USD", "CAD"].index(profile_data.get("currency", "USD")))
+        flight_type = st.selectbox("Flight Type", ["Any", "Nonstop"], index=["Any", "Nonstop"].index(profile_data.get("flight_type", "Any")))
+        
+        if st.button("Save Preferences"):
+            requests.put(f"{BASE_URL}/profile", json={"currency": currency, "flight_type": flight_type})
+            st.success("Preferences updated!")
+
+st.write("---")
+#after the authentication block start the search:
 st.write("Enter your travel details below:")
 
 # Allow users to select currency (USD/CAD):

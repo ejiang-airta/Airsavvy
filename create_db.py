@@ -1,100 +1,115 @@
-import sqlite3
-
-
 from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Boolean, ForeignKey
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
-from datetime import datetime
+from datetime import datetime, timezone
+from werkzeug.security import generate_password_hash, check_password_hash
+from sqlalchemy.orm import clear_mappers
+
+clear_mappers()  # ✅ Clears any previously cached mappers
 
 Base = declarative_base()
 
-# Users Table
+# ✅ Users Table
 class User(Base):
-    __tablename__ = 'users'
-    user_id = Column(Integer, primary_key=True)
+    __tablename__ = "users"
+
+    user_id = Column(Integer, primary_key=True, autoincrement=True, index=True)
     email = Column(String, unique=True, nullable=False)
     password_hash = Column(String, nullable=False)
-    full_name = Column(String)
-    gender = Column(String)
-    flight_type = Column(String)
-    currency = Column(String)
-    market = Column(String)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    full_name = Column(String, nullable=False)
+    gender = Column(String, nullable=True)
+    flight_type = Column(String, nullable=True)  # Nonstop or Any
+    currency = Column(String, nullable=True)  # USD or CAD
+    market = Column(String, nullable=True)  # Market Region (US, CA, etc.)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
-    subscriptions = relationship("Subscription", back_populates="user")
-    flight_searches = relationship("FlightSearch", back_populates="user")
-    alerts = relationship("Alert", back_populates="user")
+    # Relationships:
+    subscriptions = relationship("Subscription", back_populates="user", cascade="all, delete-orphan")
+    flight_searches = relationship("FlightSearch", back_populates="user", cascade="all, delete-orphan")
+    alerts = relationship("Alert", back_populates="user", cascade="all, delete-orphan")
 
-# Subscription Table
+    def set_password(self, password):
+        """Hashes and sets the password"""
+        self.password_hash = generate_password_hash(password)
+
+    def check_password(self, password):
+        """Validates a password against the stored hash"""
+        return check_password_hash(self.password_hash, password)
+
+# ✅ Subscription Table
 class Subscription(Base):
-    __tablename__ = 'subscription'
-    subscription_id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, ForeignKey('users.user_id'))
-    plan_name = Column(String)
-    start_date = Column(DateTime)
-    end_date = Column(DateTime)
-    status = Column(String)
-    price = Column(Float)
-    payment_method = Column(String)
-    subscription_type = Column(String)
+    __tablename__ = "subscriptions"
+
+    subscription_id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.user_id"), nullable=False)
+    plan_name = Column(String, nullable=False)
+    start_date = Column(DateTime, nullable=False)
+    end_date = Column(DateTime, nullable=True)
+    status = Column(String, nullable=False)
+    price = Column(Float, nullable=False)
+    payment_method = Column(String, nullable=True)
+    subscription_type = Column(String, nullable=True)
 
     user = relationship("User", back_populates="subscriptions")
 
-# Flight_Search Table
+# ✅ Flight Search Table
 class FlightSearch(Base):
     __tablename__ = 'flight_search'
-    search_id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, ForeignKey('users.user_id'))
-    origin = Column(String)
-    destination = Column(String)
-    departure_date = Column(DateTime)
+
+    search_id = Column(Integer, primary_key=True, autoincrement=True, index=True)
+    user_id = Column(Integer, ForeignKey('users.user_id'), nullable=False)
+    origin = Column(String, nullable=False)
+    destination = Column(String, nullable=False)
+    departure_date = Column(DateTime, nullable=False)
     return_date = Column(DateTime, nullable=True)
-    trip_type = Column(String)
-    search_URL = Column(String)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    trip_type = Column(String, nullable=False)  # One-way or Round-trip
+    search_URL = Column(String, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     user = relationship("User", back_populates="flight_searches")
-    flight_results = relationship("FlightResult", back_populates="search")
-    alerts = relationship("Alert", back_populates="search")
+    flight_results = relationship("FlightResult", back_populates="search", cascade="all, delete-orphan")
+    alerts = relationship("Alert", back_populates="search", cascade="all, delete-orphan")
 
-# Flight_Results Table
+# ✅ Flight Results Table
 class FlightResult(Base):
     __tablename__ = 'flight_results'
-    result_id = Column(Integer, primary_key=True)
-    search_id = Column(Integer, ForeignKey('flight_search.search_id'))
-    airline = Column(String)
-    price = Column(Float)
-    flight_number = Column(String)
-    departure_time = Column(DateTime)
-    arrival_time = Column(DateTime)
-    duration = Column(String)
-    stops = Column(Integer)
-    booking_url = Column(String)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    retrieved_at = Column(DateTime, default=datetime.utcnow)
+
+    result_id = Column(Integer, primary_key=True, autoincrement=True)
+    search_id = Column(Integer, ForeignKey('flight_search.search_id'), nullable=False)
+    airline = Column(String, nullable=False)
+    price = Column(Float, nullable=False)
+    flight_number = Column(String, nullable=True)
+    departure_time = Column(DateTime, nullable=True)
+    arrival_time = Column(DateTime, nullable=True)
+    duration = Column(String, nullable=False)
+    stops = Column(Integer, nullable=True)
+    booking_url = Column(String, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    retrieved_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     search = relationship("FlightSearch", back_populates="flight_results")
 
-# Alerts Table
+# ✅ Alerts Table
 class Alert(Base):
     __tablename__ = 'alerts'
-    alert_id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, ForeignKey('users.user_id'))
-    search_id = Column(Integer, ForeignKey('flight_search.search_id'))
-    alert_type = Column(String)
-    price_change = Column(Float)
+
+    alert_id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey('users.user_id'), nullable=False)
+    search_id = Column(Integer, ForeignKey('flight_search.search_id'), nullable=False)
+    alert_type = Column(String, nullable=False)  # e.g., "Price Drop", "Availability Change"
+    price_change = Column(Float, nullable=True)
     alert_triggered = Column(Boolean, default=False)
     triggered_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     user = relationship("User", back_populates="alerts")
     search = relationship("FlightSearch", back_populates="alerts")
 
-# SQLite Database
+# ✅ SQLite Database Connection
 engine = create_engine('sqlite:///flight_search_app.db')
 
-# Create tables
+# ✅ Create Tables in Database
 Base.metadata.create_all(engine)
 
 print("✅ Database tables created successfully!")
