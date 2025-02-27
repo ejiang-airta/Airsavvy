@@ -1,12 +1,21 @@
 import streamlit as st
 from datetime import datetime, timedelta,timezone
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, session
 from sqlalchemy.orm import sessionmaker
 from create_db import engine, User, SessionLocal
 from werkzeug.security import generate_password_hash, check_password_hash
 import os
 import hashlib
 import bcrypt
+from functools import wraps
+
+def login_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if "user_id" not in session:
+            return jsonify({"error": "Unauthorized"}), 401  # Returns 401 if not logged in
+        return f(*args, **kwargs)
+    return decorated_function
 
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "your_secret_key")  # For session management
@@ -14,6 +23,63 @@ app.secret_key = os.getenv("SECRET_KEY", "your_secret_key")  # For session manag
 # Create DB session
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 session = SessionLocal()
+
+@app.route("/profile", methods=["GET"])
+def get_profile():
+    """Retrieve the user's profile preferences."""
+    
+    db_session = SessionLocal()  # ✅ Create a proper DB session
+
+    # First, check if the user is authenticated via session
+    user_email = session.get("user_email")  # Flask session
+
+    # If session-based authentication fails, allow user_id parameter
+    if not user_email:
+        user_id = request.args.get("user_id")  # Try getting user_id from URL
+        if not user_id:
+            db_session.close()
+            return jsonify({"error": "Unauthorized - No session or user_id"}), 401
+
+        user = db_session.query(User).filter_by(user_id=user_id).first()
+    else:
+        user = db_session.query(User).filter_by(email=user_email).first()
+
+    if not user:
+        db_session.close()
+        return jsonify({"error": "User not found"}), 404
+
+    # ✅ Close DB session after fetching user
+    profile_data = {
+        "email": user.email,
+        "flight_type": user.flight_type or "Any",
+        "currency": user.currency or "USD",
+        "market": user.market or "US"
+    }
+    db_session.close()
+
+    return jsonify(profile_data)
+
+@app.route("/profile", methods=["PUT"])
+def update_profile():
+    if "user_email" not in session:
+        return jsonify({"error": "Unauthorized access"}), 401
+    
+    data = request.json
+    session_db = SessionLocal()
+    user = session_db.query(User).filter_by(email=session["user_email"]).first()
+    
+    if not user:
+        session_db.close()
+        return jsonify({"error": "User not found"}), 404
+    
+    user.currency = data.get("currency", user.currency)
+    user.flight_type = data.get("flight_type", user.flight_type)
+    user.market = data.get("market", user.market)
+
+    session_db.commit()
+    session_db.close()
+    
+    return jsonify({"message": "Profile updated successfully!"})
 
 st.title("🔑 User Login / Sign Up")
 
@@ -95,21 +161,23 @@ from flask import session  # ✅ Ensure Flask session is imported
 
 @app.route("/login", methods=["POST"])
 def login():
-    data = request.json
+    data = request.get_json()
     email = data.get("email")
     password = data.get("password")
 
-    db_session = SessionLocal()  # ✅ Rename to avoid confusion
+    db_session = SessionLocal()  # ✅ Create a SQLAlchemy session
     user = db_session.query(User).filter_by(email=email).first()
 
     if user and user.check_password(password):
-        session["user_id"] = user.user_id  # ✅ Now using Flask session correctly
-        db_session.close()
-        return jsonify({"message": "Login successful"}), 200
-    else:
-        db_session.close()
-        return jsonify({"message": "Invalid credentials"}), 401
+        # ✅ Explicitly return user_id in JSON response
+        session["user_id"] = user.user_id  # ✅ Store user_id in Flask session
 
+        return jsonify({
+            "message": "Login successful",
+            "user_id": user.user_id  # ✅ Explicitly send `user_id`
+        }), 200
+    else:
+        return jsonify({"error": "Invalid credentials"}), 401
 
 # 🚀 User Logout Endpoint
 @app.route("/logout", methods=["POST"])
@@ -120,9 +188,13 @@ def logout():
 # 🚀 Get/Update User Profile
 @app.route("/profile", methods=["GET", "PUT"])
 def profile():
-    user_id = session.get("user_id")
+    user_id = session.get("user_id")  # ✅ Try getting from session
     if not user_id:
-        return jsonify({"message": "Not authenticated"}), 401
+        user_id = request.args.get("user_id")  # ✅ Try getting from request (for debugging)
+
+    if not user_id:
+        return jsonify({"error": "Unauthorized - No session or user_id"}), 401
+
 
     session_db = SessionLocal()
     user = session_db.query(User).filter_by(user_id=user_id).first()

@@ -123,12 +123,30 @@ else:
         login_password = st.sidebar.text_input("Password", type="password", key="login_password")
 
         if st.sidebar.button("Login"):
-            response = requests.post(f"{BASE_URL}/login", json={"email": login_email, "password": login_password})
+            headers = {"Content-Type": "application/json"}  # Ensure JSON content type
+            response = requests.post(f"{BASE_URL}/login", json={"email": login_email, "password": login_password}, headers=headers)
+
             if response.status_code == 200:
-                st.session_state["user"] = {"email": login_email}
-                st.rerun()
+                try:
+                    user_data = response.json()  # Extract JSON response
+
+                    if "user_id" in user_data:  # ✅ Ensure user_id is extracted
+                        st.session_state["user"] = {
+                            "email": login_email,
+                            "user_id": user_data["user_id"],  # ✅ Ensure user_id is stored
+                            "session": response.cookies.get("session", None)  # ✅ Extract session cookie if available
+                        }
+                        st.success(f"✅ Logged in as {login_email}")  # Debug success message
+                        st.rerun()  # Refresh UI after login
+                    else:
+                        st.sidebar.error("❌ Login failed: No user_id returned")
+                except json.JSONDecodeError:
+                    st.sidebar.error("❌ Unexpected response from server.")
             else:
-                st.sidebar.error("Invalid credentials")
+                st.sidebar.error(f"Invalid credentials (Status: {response.status_code})")
+
+
+
 
     elif auth_mode == "Register":
         register_email = st.sidebar.text_input("Email", key="register_email")
@@ -154,20 +172,63 @@ else:
             else:
                 st.sidebar.warning("⚠️ Please fill in all fields before registering.")
 
-# 🚀 User Profile
+# 🚀 User Profile Section (Only Show When User Clicks Button)
 if st.session_state["user"]:
     st.subheader("🛠️ Update Preferences")
-    profile_response = requests.get(f"{BASE_URL}/profile")
+
+    if "profile_data" not in st.session_state:
+        if st.button("Fetch Profile Data"):
+            st.write("Debug: Current session state ->", st.session_state)  # Debugging
+
+            if "user_id" in st.session_state["user"] and "session" in st.session_state["user"]:
+                user_id = st.session_state["user"]["user_id"]
+                session_cookie = st.session_state["user"]["session"]
+
+                profile_response = requests.get(
+                    f"{BASE_URL}/profile",
+                    params={"user_id": user_id},
+                    cookies={"session": session_cookie}  # Send session cookie
+                )
+
+                st.write("Debug: Profile API response ->", profile_response.status_code, profile_response.text)  # Debugging
+
+                if profile_response.status_code == 200:
+                    st.session_state["profile_data"] = profile_response.json()
+                    st.success("✅ Profile data loaded successfully!")
+                else:
+                    st.error("❌ Failed to fetch profile data. Check login status.")
+            else:
+                st.error("User not logged in properly.")
+
     
-    if profile_response.status_code == 200:
-        profile_data = profile_response.json()
+    # Only show preferences form if profile data exists
+    if "profile_data" in st.session_state:
+        profile_data = st.session_state["profile_data"]
+
         currency = st.selectbox("Currency", ["USD", "CAD"], index=["USD", "CAD"].index(profile_data.get("currency", "USD")))
         flight_type = st.selectbox("Flight Type", ["Any", "Nonstop"], index=["Any", "Nonstop"].index(profile_data.get("flight_type", "Any")))
-        
-        if st.button("Save Preferences"):
-            requests.put(f"{BASE_URL}/profile", json={"currency": currency, "flight_type": flight_type})
-            st.success("Preferences updated!")
+        market = st.text_input("Market", value=profile_data.get("market", "US"))
 
+        if st.button("Save Preferences"):
+            if "user_id" in st.session_state["user"] and "session" in st.session_state["user"]:
+                user_id = st.session_state["user"]["user_id"]
+                session_cookie = st.session_state["user"]["session"]
+
+                update_response = requests.put(
+                    f"{BASE_URL}/profile",
+                    json={"currency": currency, "flight_type": flight_type, "market": market},
+                    params={"user_id": user_id},
+                    cookies={"session": session_cookie}  # ✅ Ensure session cookie is included
+                )
+
+                st.write("Debug: Profile Update API response ->", update_response.status_code, update_response.text)  # Debugging
+
+                if update_response.status_code == 200:
+                    st.success("✅ Preferences updated successfully!")
+                else:
+                    st.error(f"❌ Failed to update: {update_response.json().get('error', 'Unauthorized access')}")
+            else:
+                st.error("❌ Missing user authentication data.")
 st.write("---")
 #after the authentication block start the search:
 st.write("Enter your travel details below:")
