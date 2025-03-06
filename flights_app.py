@@ -5,37 +5,63 @@ import os
 from datetime import datetime, timedelta
 from sqlalchemy.orm import sessionmaker
 from create_db import engine, User, FlightSearch, FlightResult
-import streamlit_authenticator as stauth
 
-# Flask API URL:
+# Configuration
+# Booking.com API
+RAPIDAPI_HOST = "booking-com15.p.rapidapi.com"
+RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY")
+API_URL = f"https://{RAPIDAPI_HOST}/api/v1/flights/searchFlights"
+
+# Flask API
 BASE_URL = "http://127.0.0.1:5000"
 
 # Create DB session
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-session = SessionLocal()
+SessionLocal = sessionmaker(bind=engine)
 
-# Booking.com API via RapidAPI
-RAPIDAPI_HOST = "booking-com15.p.rapidapi.com"
-RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY")  # Use environment variable for security
-API_URL = f"https://{RAPIDAPI_HOST}/api/v1/flights/searchFlights"
+def safe_strftime(dt, fmt="%b %d, %H:%M"):
+    return dt.strftime(fmt) if dt else "N/A"
 
-# Helper function to format datetime
-def parse_datetime_or_none(date_str):
+def parse_datetime(date_str):
     try:
         return datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%S")
     except (TypeError, ValueError):
         return None
+    
+def format_duration(seconds):
+    hours = seconds // 3600
+    minutes = (seconds % 3600) // 60
+    return f"{int(hours)}h {int(minutes):02d}m"
 
-# Application UI
-st.title("✈️ Cheapest Airfare Finder")
+def get_luggage(segment):
+    try:
+        checked = sum(item['luggageAllowance']['maxPiece'] 
+                  for item in segment['travellerCheckedLuggage'])
+    except (KeyError, IndexError):
+        checked = 0
+        
+    try:
+        cabin = sum(item['luggageAllowance']['maxPiece'] 
+                for item in segment['travellerCabinLuggage'])
+    except (KeyError, IndexError):
+        cabin = 0
+    
+    return f"{checked} checked, {cabin} cabin"
+# Airline logo mapping (add more as needed)
+AIRLINE_LOGOS = {
+    "WestJet": "https://logos-world.net/wp-content/uploads/2021/02/WestJet-Logo.png",
+    "Korean Air": "https://upload.wikimedia.org/wikipedia/commons/thumb/0/09/Korean_Air_logo.svg/2560px-Korean_Air_logo.svg.png",
+    # Add more airline logos here
+}
 
-# Authentication UI
+# Streamlit UI
+st.title("✈️ Smart Flight Finder")
+
+# Authentication
 if "user" not in st.session_state:
     st.session_state["user"] = None
 
 if st.session_state["user"]:
     st.sidebar.write(f"👤 Logged in as: {st.session_state['user']['email']}")
-    user_email = st.session_state["user"]["email"]
     if st.sidebar.button("Logout"):
         requests.post(f"{BASE_URL}/logout")
         st.session_state["user"] = None
@@ -45,152 +71,227 @@ else:
     auth_mode = st.sidebar.radio("Select Mode:", ["Login", "Register"])
     
     if auth_mode == "Login":
-        login_email = st.sidebar.text_input("Email", key="login_email")
-        login_password = st.sidebar.text_input("Password", type="password", key="login_password")
+        login_email = st.sidebar.text_input("Email")
+        login_password = st.sidebar.text_input("Password", type="password")
         if st.sidebar.button("Login"):
             response = requests.post(f"{BASE_URL}/login", json={"email": login_email, "password": login_password})
             if response.status_code == 200:
                 user_data = response.json()
-                if "user_id" in user_data:
-                    st.session_state["user"] = {
-                        "email": login_email,
-                        "user_id": user_data["user_id"],
-                        "session": response.cookies.get("session", None)
-                    }
-                    st.success(f"✅ Logged in as {login_email}")
-                    st.rerun()
-                else:
-                    st.sidebar.error("❌ Login failed: No user_id returned")
-            else:
-                st.sidebar.error(f"Invalid credentials (Status: {response.status_code})")
+                st.session_state["user"] = {
+                    "email": login_email,
+                    "user_id": user_data["user_id"],
+                    "session": response.cookies.get("session")
+                }
+                st.rerun()
 
     elif auth_mode == "Register":
-        register_email = st.sidebar.text_input("Email", key="register_email")
-        register_password = st.sidebar.text_input("Password", type="password", key="register_password")
-        full_name = st.sidebar.text_input("Full Name", key="register_fullname")
+        register_email = st.sidebar.text_input("Email")
+        register_password = st.sidebar.text_input("Password", type="password")
+        full_name = st.sidebar.text_input("Full Name")
         if st.sidebar.button("Register"):
-            if register_email and register_password and full_name:
-                response = requests.post(f"{BASE_URL}/register", json={
-                    "email": register_email,
-                    "password": register_password,
-                    "full_name": full_name
-                })
-                if response.status_code == 200:
-                    st.sidebar.success("✅ Registration successful! Please login.")
-                else:
-                    st.sidebar.error(f"❌ Registration failed: {response.json().get('error', 'Unknown error')}")
-            else:
-                st.sidebar.warning("⚠️ Please fill in all fields before registering.")
+            response = requests.post(f"{BASE_URL}/register", json={
+                "email": register_email,
+                "password": register_password,
+                "full_name": full_name
+            })
+            if response.status_code == 200:
+                st.sidebar.success("Registration successful! Please login.")
 
-# Fetch user profile automatically
-if st.session_state["user"]:
-    user_id = st.session_state["user"]["user_id"]
-    session_cookie = st.session_state["user"]["session"]
-    
-    if "profile_data" not in st.session_state:
-        profile_response = requests.get(
-            f"{BASE_URL}/profile",
-            params={"user_id": user_id},
-            cookies={"session": session_cookie}
-        )
-        if profile_response.status_code == 200:
-            st.session_state["profile_data"] = profile_response.json()
-        else:
-            st.session_state["profile_data"] = {}
+# Search Form
+st.subheader("Search Flights")
+col1, col2 = st.columns(2)
+with col1:
+    from_loc = st.text_input("From (IATA)", value="YVR")
+with col2:
+    to_loc = st.text_input("To (IATA)", value="PEK")
 
-    profile_data = st.session_state["profile_data"]
-    default_currency = profile_data.get("currency", "USD")
-    default_flight_type = profile_data.get("flight_type", "Any")
-    default_market = profile_data.get("market", "US")
-else:
-    default_currency = "USD"
-    default_flight_type = "Any"
-    default_market = "US"
+currency = st.radio("Select Currency:", ["USD", "CAD"], index=0)  # Add currency options
+depart_date = st.date_input("Departure", datetime.today() + timedelta(days=2))
+trip_type = st.radio("Trip Type", ["One-way", "Round-trip"], horizontal=True)
+return_date = st.date_input("Return Date", depart_date + timedelta(days=7)) if trip_type == "Round-trip" else None
+top_n = st.slider("Number of top flights to display", 3, 10, 5)  # Restored Top N
 
-# --- ✈️ SEARCH INPUT FORM ---
-st.subheader("Enter your travel details below:")
-currency = st.radio("Select Currency:", ["USD", "CAD"], index=["USD", "CAD"].index(default_currency))
-trip_type = st.radio("Select Trip Type:", ["One-way", "Round-trip"])
-flight_type = st.radio("Flight Type:", ["Any", "Nonstop Only"], index=["Any", "Nonstop Only"].index(default_flight_type))
-top_n = st.slider("Select number of top flights to display:", min_value=3, max_value=10, value=3)
+cabin_class = st.selectbox("Cabin Class", ["ECONOMY", "PREMIUM_ECONOMY", "BUSINESS", "FIRST"])
+adults = st.number_input("Adults", 1, 5, 1)
+children = st.number_input("Children", 0, 5, 0)
+flight_type = st.radio("Stops", ["Any", "Nonstop Only"], horizontal=True)
 
-from_location = st.text_input("From (Airport Code)", value="YVR")
-to_location = st.text_input("To (Airport Code)", value="PEK")
-departure_date = st.date_input("Select Departure Date", datetime.today() + timedelta(days=2))
-return_date = None
-if trip_type == "Round-trip":
-    return_date = st.date_input("Select Return Date", departure_date + timedelta(days=7))
-
-adults = st.number_input("Number of Adults", min_value=1, max_value=5, value=1)
-children = st.number_input("Number of Children", min_value=0, max_value=5, value=0)
-cabin_class = st.selectbox("Cabin Class", ["ECONOMY", "PREMIUM_ECONOMY", "BUSINESS", "FIRST"], index=0)
-
-# --- SEARCH BUTTON ---
-if st.button("🔍 Search Flights"):
-    with st.spinner("Searching for the best flight deals..."):
-        # Construct API request
-        params = {
-            "fromId": f"{from_location}.AIRPORT",
-            "toId": f"{to_location}.AIRPORT",
-            "departDate": departure_date.strftime("%Y-%m-%d"),
-            "returnDate": return_date.strftime("%Y-%m-%d") if trip_type == "Round-trip" else "",
-            "pageNo": 1,
-            "adults": adults,
-            "children": f"{children},17" if children > 0 else "0",
-            "sort": "BEST",
-            "cabinClass": cabin_class,
-            "currency_code": currency
-        }
-
-        # ✅ Fix: Ensure API headers are ASCII-compatible
-        headers = {
-            "x-rapidapi-host": RAPIDAPI_HOST.encode("ascii", "ignore").decode(),
-            "x-rapidapi-key": RAPIDAPI_KEY.encode("ascii", "ignore").decode()
-        }
-
+if st.button("🔍 Find Flights"):
+    with st.spinner("Searching flights..."):
+        session = None
         try:
+            # Database setup
+            session = SessionLocal()
+            flight_search = FlightSearch(
+                user_id=st.session_state["user"]["user_id"] if st.session_state["user"] else None,
+                origin=from_loc,
+                destination=to_loc,
+                departure_date=depart_date,
+                return_date=return_date,
+                trip_type=trip_type,
+                created_at=datetime.now()
+            )
+            session.add(flight_search)
+            session.commit()
+
+            # API Request
+            params = {
+                "currency_code": currency,
+                "fromId": f"{from_loc}.AIRPORT",
+                "toId": f"{to_loc}.AIRPORT",
+                "departDate": depart_date.strftime("%Y-%m-%d"),
+                "returnDate": return_date.strftime("%Y-%m-%d") if return_date else "",
+                "adults": adults,
+                "children": f"{children},17" if children else "0",
+                "cabinClass": cabin_class,
+                "sort": "CHEAPEST"
+            }
+
+            headers = {
+                "x-rapidapi-host": RAPIDAPI_HOST.encode("ascii", "ignore").decode(),
+                "x-rapidapi-key": RAPIDAPI_KEY.encode("ascii", "ignore").decode()
+            }
+
             response = requests.get(API_URL, headers=headers, params=params)
-            response.raise_for_status()  # Raise an error if the request fails
-        except requests.exceptions.RequestException as e:
-            st.error(f"❌ API Request Failed: {str(e)}")
-            st.stop()
-
-        if response.status_code == 200:
+            response.raise_for_status()
             data = response.json()
-            flights = data.get("data", {}).get("flightOffers", [])
 
-            if not flights:
-                st.warning("No flights found. Try changing the search criteria.")
-            else:
-                st.subheader(f"📌 Showing {len(flights[:top_n])} Best Flight Options:")
-                for flight in flights[:top_n]:
-                    segments = flight.get("segments", [])
-                    if not segments:
-                        continue
+            # Process flights
+            processed_offers = []
+            for offer in data.get("data", {}).get("flightOffers", []):
+                try:
+                    price_data = offer['priceBreakdown']['total']
+                    price = price_data['units'] + price_data['nanos']/1e9
+                    currency = price_data.get('currencyCode', 'CAD')
+                    
+                    # Get outbound and return segments
+                    outbound = offer['segments'][0]
+                    return_flight = offer['segments'][1] if len(offer['segments']) > 1 else None
+                    
+                    # Process outbound flight
+                    outbound_leg = outbound['legs'][0]
+                    outbound_carrier = outbound_leg['carriersData'][0]
+                    outbound_airline = outbound_carrier.get('name', 'Unknown')
+                    outbound_flight_num = outbound_leg.get('flightInfo', {}).get('flightNumber', '')
+                    
+                    # Process return flight if exists
+                    return_info = {}
+                    if return_flight:
+                        return_leg = return_flight['legs'][0]
+                        return_carrier = return_leg['carriersData'][0]
+                        return_info = {
+                            'airline': return_carrier.get('name', 'Unknown'),
+                            'flight_num': return_leg.get('flightInfo', {}).get('flightNumber', ''),
+                            'departure': parse_datetime(return_flight['departureTime']),
+                            'arrival': parse_datetime(return_flight['arrivalTime']),
+                            'duration': format_duration(return_flight['totalTime']),
+                            'stops': len(return_flight['legs']) - 1,
+                            'luggage': get_luggage(return_flight)
+                        }
 
-                    departure_segment = segments[0]
-                    arrival_segment = segments[-2]  # ✅ FIXED: Correct last arrival segment
+                    processed_offers.append({
+                        'price': price,
+                        'currency': currency,
+                        'outbound': {
+                            'airline': outbound_airline,
+                            'flight_num': outbound_flight_num,
+                            'departure': parse_datetime(outbound['departureTime']),
+                            'arrival': parse_datetime(outbound['arrivalTime']),
+                            'duration': format_duration(outbound['totalTime']),
+                            'stops': len(outbound['legs']) - 1,
+                            'luggage': get_luggage(outbound)
+                        },
+                        'return': return_info if return_flight else None,
+                        'booking_url': offer.get('deepLink') or f"https://flights.booking.com/flights/{from_loc}-{to_loc}/"
+                    })
+                    
+                except (KeyError, IndexError) as e:
+                    continue
 
-                    departure_airport = departure_segment.get("departureAirport", {}).get("name", "Unknown")
-                    arrival_airport = arrival_segment.get("arrivalAirport", {}).get("name", "Unknown")
-                    departure_time = departure_segment.get("departureTime", "Unknown")
-                    arrival_time = arrival_segment.get("arrivalTime", "Unknown")
+            # Display results
+            st.title(f"✈️ {from_loc} ↔ {to_loc} Flight Deals")
+            st.markdown(f"## **Top {(top_n)} Cheapest {'Round-trip' if return_date else 'One-way'} Options**")
 
-                    carriers_data = departure_segment.get("legs", [{}])[0].get("carriersData", [{}])
-                    airline_name = carriers_data[0].get("name", "Unknown Airline")
-                    airline_code = carriers_data[0].get("code", "Unknown")
-                    airline_logo = carriers_data[0].get("logo", "")
+            for idx, offer in enumerate(processed_offers[:top_n], 1):
+                with st.container(border=True):
+                    # Header with price and book button
+                    col_head = st.columns([4, 1])
 
-                    price_info = flight.get("priceBreakdown", {}).get("total", {})
-                    price_currency = price_info.get("currencyCode", "USD")
-                    price_amount = price_info.get("units", 0)
+                    # Modify URL generation to include currency
+                    booking_url = f"https://flights.booking.com/flights/{from_loc}.AIRPORT-{to_loc}.AIRPORT/"
+                    booking_url += f"?type={'ROUNDTRIP' if return_date else 'ONEWAY'}"
+                    booking_url += f"&adults={adults}&cabinClass={cabin_class.upper()}"
+                    booking_url += f"&from={from_loc}.AIRPORT&to={to_loc}.AIRPORT"
+                    booking_url += f"&depart={depart_date.strftime('%Y-%m-%d')}"
+                    if trip_type and return_date:
+                        booking_url += f"&return={return_date.strftime('%Y-%m-%d')}"
+                    booking_url += f"&currency={currency}&sort=CHEAPEST"  
+                   
+                    with col_head[0]:
+                        st.markdown(f"### Option {idx}")
+                    with col_head[1]:
+                        st.markdown(f"### {offer['currency']} {offer['price']:,.2f}")
+                        # ✅ "Book Now" Button
+                        st.markdown(
+                            f'<a href="{booking_url}" target="_blank"><button style="background-color:#4CAF50;color:white;padding:8px 16px;border:none;border-radius:4px;cursor:pointer;">Book Now</button></a>',
+                            unsafe_allow_html=True
+                        )
+                    
+                    st.markdown("---")
+                    
+                    # Outbound details
+                    with st.expander(f"🛫 Outbound: {from_loc} → {to_loc}", expanded=True):
+                        col1, col2 = st.columns([1, 4])
+                        with col1:
+                            logo = AIRLINE_LOGOS.get(offer['outbound']['airline'])
+                            if logo:
+                                st.image(logo, width=60)
+                        with col2:
+                            st.write(f"**{offer['outbound']['airline']}** (Flight {offer['outbound']['flight_num']})")
+                            st.write(f"**Departure:** {safe_strftime(offer['outbound']['departure'], '%b %d, %Y %H:%M')}")
+                            st.write(f"**Arrival:** {safe_strftime(offer['outbound']['arrival'], '%b %d, %Y %H:%M')}")
+                            st.write(f"**Duration:** {offer['outbound']['duration']}")
+                            st.write(f"**Stops:** {offer['outbound']['stops']} | **Luggage:** {offer['outbound']['luggage']}")
+                    
+                    # Return details if available
+                    if offer['return']:
+                        with st.expander(f"🛬 Return: {to_loc} → {from_loc}", expanded=True):
+                            col1, col2 = st.columns([1, 4])
+                            with col1:
+                                logo = AIRLINE_LOGOS.get(offer['return']['airline'])
+                                if logo:
+                                    st.image(logo, width=60)
+                            with col2:
+                                st.write(f"**{offer['return']['airline']}** (Flight {offer['return']['flight_num']})")
+                                st.write(f"**Departure:** {safe_strftime(offer['return']['departure'], '%b %d, %Y %H:%M')}")
+                                st.write(f"**Arrival:** {safe_strftime(offer['return']['arrival'], '%b %d, %Y %H:%M')}")
+                                st.write(f"**Duration:** {offer['return']['duration']}")
+                                st.write(f"**Stops:** {offer['return']['stops']} | **Luggage:** {offer['return']['luggage']}")
+                    
+                    st.markdown("---")
 
-                    st.markdown(f"{st.image(airline_logo, width=10)} {airline_name} ({airline_code})")
-                    st.write(f"💲 Price: {price_currency} {price_amount}")
-                    st.write(f"🛫 {departure_airport} → {arrival_airport}")
-                    st.write(f"⏰ {departure_time} → {arrival_time}")
-                    st.image(airline_logo, width=50)
-                    st.write("---")
 
-        else:
-            st.error(f"❌ API Error: {response.status_code} - {response.text}")
+                # Save result (ensure your FlightResult model matches these fields)
+                # session.add(FlightResult(
+                #     search_id=flight_search.search_id,
+                #     airline=flight['airlines'],
+                #     price=flight['price'],
+                #     flight_number=flight['flight_nums'],
+                #     departure_time=flight['departure'],
+                #     arrival_time=flight['arrival'],
+                #     duration=(flight['arrival'] - flight['departure']).total_seconds() // 60,
+                #     stops=flight['stops'],
+                #     baggage_info=flight['baggage'],
+                #     booking_url=flight['booking_url'],    # Changed from 'url' to 'booking_url'
+                #     retrieved_at=datetime.now()
+                # ))
+
+            session.commit()
+
+        except Exception as e:
+            st.error(f"Error: {str(e)}")
+            if session:
+                session.rollback()
+        finally:
+            if session:
+                session.close()
