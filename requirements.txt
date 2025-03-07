@@ -1,0 +1,8 @@
+streamlit
+flask 
+sqlalchemy.orm
+werkzeug.security
+os
+hashlib
+bcrypt
+sqlalchemy
