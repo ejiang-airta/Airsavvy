@@ -46,12 +46,6 @@ def get_luggage(segment):
         cabin = 0
     
     return f"{checked} checked, {cabin} cabin"
-# Airline logo mapping (add more as needed)
-AIRLINE_LOGOS = {
-    "WestJet": "https://logos-world.net/wp-content/uploads/2021/02/WestJet-Logo.png",
-    "Korean Air": "https://upload.wikimedia.org/wikipedia/commons/thumb/0/09/Korean_Air_logo.svg/2560px-Korean_Air_logo.svg.png",
-    # Add more airline logos here
-}
 
 # Streamlit UI
 st.title("✈️ Smart Flight Finder")
@@ -108,7 +102,7 @@ with col2:
 currency = st.radio("Select Currency:", ["USD", "CAD"], index=0)  # Add currency options
 depart_date = st.date_input("Departure", datetime.today() + timedelta(days=2))
 trip_type = st.radio("Trip Type", ["One-way", "Round-trip"], horizontal=True)
-return_date = st.date_input("Return Date", depart_date + timedelta(days=7)) if trip_type == "Round-trip" else None
+return_date = st.date_input("Return Date", depart_date + timedelta(days=20)) if trip_type == "Round-trip" else None
 top_n = st.slider("Number of top flights to display", 3, 10, 5)  # Restored Top N
 
 cabin_class = st.selectbox("Cabin Class", ["ECONOMY", "PREMIUM_ECONOMY", "BUSINESS", "FIRST"])
@@ -155,6 +149,8 @@ if st.button("🔍 Find Flights"):
             response = requests.get(API_URL, headers=headers, params=params)
             response.raise_for_status()
             data = response.json()
+            # print(data) # Debugging print data
+            # print("_______________________________")
 
             # Process flights
             processed_offers = []
@@ -162,7 +158,7 @@ if st.button("🔍 Find Flights"):
                 try:
                     price_data = offer['priceBreakdown']['total']
                     price = price_data['units'] + price_data['nanos']/1e9
-                    currency = price_data.get('currencyCode', 'CAD')
+                    currency = price_data.get('currencyCode', currency)
                     
                     # Get outbound and return segments
                     outbound = offer['segments'][0]
@@ -173,12 +169,16 @@ if st.button("🔍 Find Flights"):
                     outbound_carrier = outbound_leg['carriersData'][0]
                     outbound_airline = outbound_carrier.get('name', 'Unknown')
                     outbound_flight_num = outbound_leg.get('flightInfo', {}).get('flightNumber', '')
+                    outbound_logo = outbound_carrier.get("logo", "")
+                    #outbound_airport = outbound['departureAirport']['cityName']
                     
                     # Process return flight if exists
                     return_info = {}
                     if return_flight:
                         return_leg = return_flight['legs'][0]
                         return_carrier = return_leg['carriersData'][0]
+                        return_airline = return_carrier.get('name', 'Unknown')
+                        return_logo = return_carrier.get("logo", "")
                         return_info = {
                             'airline': return_carrier.get('name', 'Unknown'),
                             'flight_num': return_leg.get('flightInfo', {}).get('flightNumber', ''),
@@ -186,7 +186,8 @@ if st.button("🔍 Find Flights"):
                             'arrival': parse_datetime(return_flight['arrivalTime']),
                             'duration': format_duration(return_flight['totalTime']),
                             'stops': len(return_flight['legs']) - 1,
-                            'luggage': get_luggage(return_flight)
+                            'luggage': get_luggage(return_flight),
+                            'logo': return_logo
                         }
 
                     processed_offers.append({
@@ -199,7 +200,8 @@ if st.button("🔍 Find Flights"):
                             'arrival': parse_datetime(outbound['arrivalTime']),
                             'duration': format_duration(outbound['totalTime']),
                             'stops': len(outbound['legs']) - 1,
-                            'luggage': get_luggage(outbound)
+                            'luggage': get_luggage(outbound),
+                            'logo': outbound_logo
                         },
                         'return': return_info if return_flight else None,
                         'booking_url': offer.get('deepLink') or f"https://flights.booking.com/flights/{from_loc}-{to_loc}/"
@@ -207,6 +209,7 @@ if st.button("🔍 Find Flights"):
                     
                 except (KeyError, IndexError) as e:
                     continue
+            # print(processed_offers) # Debugging print processed_offers
 
             # Display results
             st.title(f"✈️ {from_loc} ↔ {to_loc} Flight Deals")
@@ -214,8 +217,8 @@ if st.button("🔍 Find Flights"):
 
             for idx, offer in enumerate(processed_offers[:top_n], 1):
                 with st.container(border=True):
-                    # Header with price and book button
-                    col_head = st.columns([4, 1])
+                    # Header row with option number, price, and book button
+                    col_header = st.columns([3, 2, 1])
 
                     # Modify URL generation to include currency
                     booking_url = f"https://flights.booking.com/flights/{from_loc}.AIRPORT-{to_loc}.AIRPORT/"
@@ -227,48 +230,72 @@ if st.button("🔍 Find Flights"):
                         booking_url += f"&return={return_date.strftime('%Y-%m-%d')}"
                     booking_url += f"&currency={currency}&sort=CHEAPEST"  
                    
-                    with col_head[0]:
+                    with col_header[0]:
                         st.markdown(f"### Option {idx}")
-                    with col_head[1]:
-                        st.markdown(f"### {offer['currency']} {offer['price']:,.2f}")
-                        # ✅ "Book Now" Button
-                        st.markdown(
-                            f'<a href="{booking_url}" target="_blank"><button style="background-color:#4CAF50;color:white;padding:8px 16px;border:none;border-radius:4px;cursor:pointer;">Book Now</button></a>',
-                            unsafe_allow_html=True
-                        )
-                    
-                    st.markdown("---")
-                    
-                    # Outbound details
-                    with st.expander(f"🛫 Outbound: {from_loc} → {to_loc}", expanded=True):
-                        col1, col2 = st.columns([1, 4])
-                        with col1:
-                            logo = AIRLINE_LOGOS.get(offer['outbound']['airline'])
-                            if logo:
-                                st.image(logo, width=60)
-                        with col2:
-                            st.write(f"**{offer['outbound']['airline']}** (Flight {offer['outbound']['flight_num']})")
-                            st.write(f"**Departure:** {safe_strftime(offer['outbound']['departure'], '%b %d, %Y %H:%M')}")
-                            st.write(f"**Arrival:** {safe_strftime(offer['outbound']['arrival'], '%b %d, %Y %H:%M')}")
-                            st.write(f"**Duration:** {offer['outbound']['duration']}")
-                            st.write(f"**Stops:** {offer['outbound']['stops']} | **Luggage:** {offer['outbound']['luggage']}")
-                    
-                    # Return details if available
+                    with col_header[1]:
+                        st.markdown(f"#### {offer['currency']} {offer['price']:,.2f}")
+                    with col_header[2]:
+                        if offer['booking_url']:
+                            st.markdown(
+                                f'<a href="{booking_url}" target="_blank"><button style="background-color:#4CAF50;color:white;padding:8px 16px;border:none;border-radius:4px;cursor:pointer;">Book Now</button></a>',
+                                unsafe_allow_html=True)
+                        else:
+                            st.write("")  # Empty placeholder
+        
+                    # Flight details columns
+                    flight_cols = st.columns(2)
+        
+                    # Outbound Flight
+                    with flight_cols[0]:
+                        # Use columns for logo + text
+                        col_logo, col_text = st.columns([1, 4])
+                        with col_logo:
+                            if offer['outbound']['logo']:
+                                st.image(offer['outbound']['logo'], width=50, output_format="auto")
+                        with col_text:
+                            st.markdown(f"**{offer['outbound']['airline']}**  \nFlight {offer['outbound']['flight_num']}")
+                        st.write(f"🛫 Outbound: {outbound['departureAirport']['cityName']} → {outbound['arrivalAirport']['cityName']}")
+                        st.write(f"**Departure:** {safe_strftime(offer['outbound']['departure'], '%b %d, %Y %H:%M')}")
+                        st.write(f"**Arrival:** {safe_strftime(offer['outbound']['arrival'], '%b %d, %Y %H:%M')}")
+                        st.write(f"**Duration:** {offer['outbound']['duration']}")
+                        st.write(f"**Stops:** {offer['outbound']['stops']} | **Luggage:** {offer['outbound']['luggage']}")
+
+                    # Return Flight (if exists)
                     if offer['return']:
-                        with st.expander(f"🛬 Return: {to_loc} → {from_loc}", expanded=True):
-                            col1, col2 = st.columns([1, 4])
-                            with col1:
-                                logo = AIRLINE_LOGOS.get(offer['return']['airline'])
-                                if logo:
-                                    st.image(logo, width=60)
-                            with col2:
-                                st.write(f"**{offer['return']['airline']}** (Flight {offer['return']['flight_num']})")
-                                st.write(f"**Departure:** {safe_strftime(offer['return']['departure'], '%b %d, %Y %H:%M')}")
-                                st.write(f"**Arrival:** {safe_strftime(offer['return']['arrival'], '%b %d, %Y %H:%M')}")
-                                st.write(f"**Duration:** {offer['return']['duration']}")
-                                st.write(f"**Stops:** {offer['return']['stops']} | **Luggage:** {offer['return']['luggage']}")
+                        with flight_cols[1]:
+                             # Use columns for logo + text
+                            col_logo_ret, col_text_ret = st.columns([1, 4])
+                            with col_logo_ret:
+                                if offer['return']['logo']:
+                                    st.image(offer['return']['logo'], width=50, output_format="auto")
+                            with col_text_ret:
+                                st.markdown(f"**{offer['return']['airline']}**  \nFlight {offer['return']['flight_num']}")  # Fixed here
+
+                            st.write(f"🛬 Return: {return_flight['departureAirport']['cityName']} → {return_flight['arrivalAirport']['cityName']}")
+                            st.write(f"**Departure:** {safe_strftime(offer['return']['departure'], '%b %d, %Y %H:%M')}")
+                            st.write(f"**Arrival:** {safe_strftime(offer['return']['arrival'], '%b %d, %Y %H:%M')}")
+                            st.write(f"**Duration:** {offer['return']['duration']}")
+                            st.write(f"**Stops:** {offer['return']['stops']} | **Luggage:** {offer['return']['luggage']}")
+
+                    #st.markdown("---")
                     
-                    st.markdown("---")
+    
+                    # # Return details if available
+                    # if offer['return']:
+                    #     with st.expander(f"🛬 Return: {to_loc} → {from_loc}", expanded=True):
+                    #         col1, col2 = st.columns([1, 4])
+                    #         with col1:
+                    #             logo = AIRLINE_LOGOS.get(offer['return']['airline'])
+                    #             if logo:
+                    #                 st.image(logo, width=60)
+                    #         with col2:
+                    #             st.write(f"**{offer['return']['airline']}** (Flight {offer['return']['flight_num']})")
+                    #             st.write(f"**Departure:** {safe_strftime(offer['return']['departure'], '%b %d, %Y %H:%M')}")
+                    #             st.write(f"**Arrival:** {safe_strftime(offer['return']['arrival'], '%b %d, %Y %H:%M')}")
+                    #             st.write(f"**Duration:** {offer['return']['duration']}")
+                    #             st.write(f"**Stops:** {offer['return']['stops']} | **Luggage:** {offer['return']['luggage']}")
+                    
+                    #st.markdown("---")
 
 
                 # Save result (ensure your FlightResult model matches these fields)
